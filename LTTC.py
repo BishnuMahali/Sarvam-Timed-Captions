@@ -1,7 +1,7 @@
 """
-LTTC (Local Transcription & Timed Captioning) Toolkit
+LTTC (Local Transcription & Timed Captions) Toolkit
 
-Transcribe video/audio in any language (focus on endangered/abandoned ones) into timed captions using OpenAI Whisper.
+Transcribe video/audio in under-supported languages into timed captions using OpenAI Whisper.
 
 Requirements:
 1. Python 3.x
@@ -62,8 +62,8 @@ def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn"):
     print(f"[LTTC] SRT file saved as: {srt_path}")
 
 def interactive_main():
-    print("==== LTTC: Long Term Transcription & Captioning Toolkit ====")
-    print("Transcribe audio or video to timed captions for endangered/abandoned languages.\n")
+    print("==== LTTC: Local Transcription & Timed Captions Toolkit ====")
+    print("Transcribe audio or video to timed captions for under-supported languages.\n")
     while True:
         video_file = input("Enter the path to your video/audio file (or 'q' to quit): ").strip()
         if video_file.lower() == 'q':
@@ -107,7 +107,7 @@ def interactive_main():
 def cli_main(argv=None):
     parser = argparse.ArgumentParser(
         prog="lttc",
-        description="LTTC: Long Term Transcription & Captioning Toolkit"
+        description="LTTC: Local Transcription & Timed Captions Toolkit"
     )
     parser.add_argument("input_file", nargs="?", help="Input audio/video file")
     parser.add_argument("--lang", "-l", default="bn", help="Language code for transcription (e.g. bn, asr)")
