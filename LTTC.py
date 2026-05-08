@@ -32,19 +32,105 @@ This will let you invoke 'lttc' from any directory.
 import os
 import sys
 import argparse
+import importlib
+import shutil
+import subprocess
 
-import whisper
-import pysrt
+PYTHON_DEPENDENCIES = {
+    "whisper": "openai-whisper",
+    "pysrt": "pysrt",
+}
+
+MODEL_SIZES = {"tiny", "base", "small", "medium", "large"}
+
+
+def missing_python_dependencies():
+    missing = []
+    for module_name, package_name in PYTHON_DEPENDENCIES.items():
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            missing.append(package_name)
+    return missing
+
+
+def install_python_dependencies(packages):
+    command = [sys.executable, "-m", "pip", "install", *packages]
+    print(f"[LTTC] Installing: {' '.join(packages)}")
+    return subprocess.run(command).returncode == 0
+
+
+def ensure_python_dependencies(auto_install=False):
+    missing = missing_python_dependencies()
+    if not missing:
+        return True
+
+    install_command = f"{sys.executable} -m pip install {' '.join(missing)}"
+    print("[LTTC] Missing required Python package(s):")
+    for package_name in missing:
+        print(f"  - {package_name}")
+    print(f"\n[LTTC] Install command:\n  {install_command}\n")
+
+    should_install = auto_install
+    if not should_install and sys.stdin.isatty():
+        answer = input("Install missing Python package(s) now? [y/N]: ").strip().lower()
+        should_install = answer in {"y", "yes"}
+
+    if not should_install:
+        print("[LTTC] Dependency installation skipped. Install the package(s), then run LTTC again.")
+        return False
+
+    if not install_python_dependencies(missing):
+        print("[LTTC] Installation failed. Try running the install command above manually.")
+        return False
+
+    still_missing = missing_python_dependencies()
+    if still_missing:
+        print(f"[LTTC] Still missing after install: {', '.join(still_missing)}")
+        return False
+
+    print("[LTTC] Python dependencies are ready.")
+    return True
+
+
+def ensure_ffmpeg_available():
+    if shutil.which("ffmpeg"):
+        return True
+
+    print("[LTTC] FFmpeg was not found on your system PATH.")
+    print("[LTTC] Install FFmpeg, then make sure this command works:")
+    print("  ffmpeg -version")
+    print("\n[LTTC] Download: https://ffmpeg.org/download.html")
+    return False
 
 def extract_audio(video_path, audio_path):
+    if not ensure_ffmpeg_available():
+        return False
+
     print(f"[LTTC] Extracting audio from: {video_path}")
-    result = os.system(f'ffmpeg -y -i "{video_path}" -ar 16000 -ac 1 -c:a pcm_s16le "{audio_path}"')
-    if result != 0:
-        print("[LTTC] Error extracting audio. Ensure ffmpeg is installed and video file is accessible.")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-c:a",
+        "pcm_s16le",
+        audio_path,
+    ]
+    result = subprocess.run(command)
+    if result.returncode != 0:
+        print("[LTTC] Error extracting audio. Ensure the file is accessible and FFmpeg can read it.")
         return False
     return True
 
 def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn"):
+    import whisper
+    import pysrt
+
     print(f"[LTTC] Loading Whisper model: {model_size}")
     model = whisper.load_model(model_size)
     print(f"[LTTC] Transcribing audio (language: {lang})... (this may take a while)")
@@ -67,6 +153,11 @@ def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn"):
 def interactive_main():
     print("==== LTTC: Local Transcription & Timed Captions Toolkit ====")
     print("Transcribe audio or video to timed captions for under-supported languages.\n")
+    if not ensure_python_dependencies():
+        return
+    if not ensure_ffmpeg_available():
+        return
+
     while True:
         video_file = input("Enter the path to your video/audio file (or 'q' to quit): ").strip()
         if video_file.lower() == 'q':
@@ -82,7 +173,7 @@ def interactive_main():
 
         default_model = "base"
         model_size = input(f"Choose Whisper model size ('tiny', 'base', 'small', 'medium', 'large') [{default_model}]: ").strip().lower() or default_model
-        if model_size not in {"tiny", "base", "small", "medium", "large"}:
+        if model_size not in MODEL_SIZES:
             model_size = default_model
 
         temp_audio_file = "temp_audio.wav"
@@ -117,8 +208,14 @@ def cli_main(argv=None):
     parser.add_argument("--tc", action="store_true", help="Output timed captions (SRT). Default if not set.")
     parser.add_argument("--model", "-m", default="base", help="Whisper model (tiny, base, small, medium, large)")
     parser.add_argument("--output", "-o", help="Output SRT filename")
+    parser.add_argument("--install-deps", action="store_true", help="Install missing Python dependencies without prompting")
     parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode")
     args = parser.parse_args(argv)
+
+    if not ensure_python_dependencies(auto_install=args.install_deps):
+        sys.exit(1)
+    if not ensure_ffmpeg_available():
+        sys.exit(1)
 
     if args.interactive or not args.input_file:
         interactive_main()
@@ -131,7 +228,7 @@ def cli_main(argv=None):
 
     lang = args.lang
     model_size = args.model
-    if model_size not in {"tiny", "base", "small", "medium", "large"}:
+    if model_size not in MODEL_SIZES:
         print(f"[LTTC] Invalid model size '{model_size}', falling back to 'base'.")
         model_size = "base"
     base, ext = os.path.splitext(input_file)

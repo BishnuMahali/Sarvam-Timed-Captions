@@ -42,6 +42,14 @@ Clone the repository, then install the Python dependencies:
 pip install openai-whisper pysrt
 ```
 
+LTTC can also help install missing Python packages when it starts. If a required package is missing, interactive runs will ask whether to install it.
+
+To install missing Python dependencies automatically:
+
+```bash
+python LTTC.py --install-deps
+```
+
 Make sure FFmpeg is installed:
 
 ```bash
@@ -56,6 +64,12 @@ Run LTTC on a video or audio file:
 
 ```bash
 python LTTC.py "path/to/video.mp4" --lang bn --model base
+```
+
+If Python dependencies are missing, install them automatically while running:
+
+```bash
+python LTTC.py "path/to/video.mp4" --lang bn --install-deps
 ```
 
 Choose an output file:
