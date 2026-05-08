@@ -20,6 +20,7 @@ Options:
     --tc             : create timed captions (SRT); default is on if not specified
     --model/-m <sz>  : Whisper model size (tiny, base, small, medium, large)
     --output/-o <f>  : output SRT filename
+    --tui            : open the Textual terminal UI
     -i/--interactive : interactive mode (as before)
     -h/--help        : print help
 
@@ -35,10 +36,16 @@ import argparse
 import importlib
 import shutil
 import subprocess
+import threading
 
 PYTHON_DEPENDENCIES = {
     "whisper": "openai-whisper",
     "pysrt": "pysrt",
+}
+
+UI_DEPENDENCIES = {
+    "rich": "rich",
+    "textual": "textual",
 }
 
 REPAIR_DEPENDENCIES = {
@@ -75,6 +82,16 @@ def dependency_status():
         except Exception as error:
             broken.append((module_name, package_name, error))
     return missing, broken
+
+
+def missing_ui_dependencies():
+    missing = []
+    for module_name, package_name in UI_DEPENDENCIES.items():
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            missing.append(package_name)
+    return missing
 
 
 def missing_python_dependencies():
@@ -198,7 +215,7 @@ def prompt_input_file():
     return file_path
 
 
-def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_global_install=False):
+def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_global_install=False, prompt=True):
     missing, broken = dependency_status()
     if not missing and not broken:
         return True
@@ -217,7 +234,7 @@ def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_glob
 
     if missing:
         should_install = auto_install
-        if not should_install:
+        if not should_install and prompt:
             should_install = prompt_yes_no("\nInstall missing Python package(s) now? [y/N]: ")
         if not should_install:
             print("[LTTC] Dependency installation skipped. Install the package(s), then run LTTC again.")
@@ -228,7 +245,7 @@ def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_glob
 
     if repair_packages:
         should_repair = auto_install or auto_repair
-        if not should_repair:
+        if not should_repair and prompt:
             should_repair = prompt_yes_no("\nRepair broken Python package(s) now? [y/N]: ")
         if not should_repair:
             print("[LTTC] Dependency repair skipped. Run the repair command above, then try LTTC again.")
@@ -367,6 +384,218 @@ def interactive_main():
             print("Thank you for using LTTC.")
             break
 
+
+def run_tui():
+    missing = missing_ui_dependencies()
+    if missing:
+        install_command = pip_install_command(missing)
+        print("[LTTC] Missing terminal UI package(s):")
+        for package_name in missing:
+            print(f"  - {package_name}")
+        print(f"\n[LTTC] Install command:\n  {format_command(install_command)}")
+        print("\n[LTTC] Or install all project dependencies:")
+        print("  python -m pip install -r requirements.txt")
+        return 1
+
+    from textual.app import App, ComposeResult
+    from textual.containers import Container, Horizontal, Vertical
+    from textual.widgets import Button, Footer, Header, Input, Label, Log, Select, Static
+    from rich.text import Text
+
+    class LTTCApp(App):
+        TITLE = "LTTC"
+        SUB_TITLE = "Local Transcription & Timed Captions"
+        CSS = """
+        Screen {
+            background: #101418;
+            color: #edf2f7;
+        }
+
+        #shell {
+            width: 92%;
+            max-width: 110;
+            height: auto;
+            margin: 1 2;
+        }
+
+        #hero {
+            height: 6;
+            padding: 1 2;
+            background: #17202a;
+            border: round #5cc8ff;
+        }
+
+        #title {
+            text-style: bold;
+            color: #f7fbff;
+        }
+
+        #tagline {
+            color: #a9b7c6;
+        }
+
+        #form {
+            margin-top: 1;
+            padding: 1 2;
+            border: round #3a4654;
+            background: #121820;
+        }
+
+        #log_panel {
+            margin-top: 1;
+            height: 14;
+            border: round #3a4654;
+            background: #0d1117;
+        }
+
+        .field_label {
+            margin-top: 1;
+            color: #cbd5e1;
+        }
+
+        Input, Select {
+            margin-top: 1;
+        }
+
+        Button {
+            margin-top: 1;
+            margin-right: 1;
+        }
+
+        #status {
+            margin-top: 1;
+            color: #8bd5a5;
+        }
+        """
+
+        def compose(self) -> ComposeResult:
+            yield Header()
+            with Container(id="shell"):
+                with Vertical(id="hero"):
+                    yield Static(Text("LTTC", style="bold #f7fbff"), id="title")
+                    yield Static(
+                        Text(
+                            "Local Transcription & Timed Captions for Bengali and under-supported languages",
+                            style="#a9b7c6",
+                        ),
+                        id="tagline",
+                    )
+                with Vertical(id="form"):
+                    yield Label("Input media", classes="field_label")
+                    with Horizontal():
+                        yield Input(placeholder="Choose a video/audio file or paste a path", id="input_file")
+                        yield Button("Browse", id="browse", variant="primary")
+                    yield Label("Language code", classes="field_label")
+                    yield Input(value="bn", placeholder="bn", id="language")
+                    yield Label("Whisper model", classes="field_label")
+                    yield Select(
+                        [(model, model) for model in ["tiny", "base", "small", "medium", "large"]],
+                        value="base",
+                        id="model",
+                    )
+                    yield Label("Output SRT", classes="field_label")
+                    yield Input(placeholder="Leave empty for input-file.bn.srt", id="output_file")
+                    with Horizontal():
+                        yield Button("Transcribe", id="transcribe", variant="success")
+                        yield Button("Quit", id="quit", variant="error")
+                    yield Static("Ready", id="status")
+                yield Log(id="log_panel", highlight=True)
+            yield Footer()
+
+        def on_mount(self) -> None:
+            self.query_one("#input_file", Input).focus()
+            self.write_log("Ready. Select a media file, choose a model, then transcribe.")
+
+        def write_log(self, message):
+            self.query_one("#log_panel", Log).write_line(str(message))
+
+        def set_status(self, message):
+            self.query_one("#status", Static).update(message)
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "quit":
+                self.exit()
+                return
+            if event.button.id == "browse":
+                file_path = browse_for_media_file()
+                if file_path:
+                    self.query_one("#input_file", Input).value = file_path
+                    output = self.query_one("#output_file", Input)
+                    language = self.query_one("#language", Input).value.strip() or "bn"
+                    output.value = os.path.splitext(file_path)[0] + f".{language}.srt"
+                return
+            if event.button.id == "transcribe":
+                self.start_transcription()
+
+        def start_transcription(self):
+            input_file = self.query_one("#input_file", Input).value.strip()
+            language = self.query_one("#language", Input).value.strip() or "bn"
+            model = self.query_one("#model", Select).value or "base"
+            output_file = self.query_one("#output_file", Input).value.strip()
+
+            if not input_file:
+                self.set_status("Choose an input file first.")
+                self.write_log("Input file is required.")
+                return
+            if not os.path.isfile(input_file):
+                self.set_status("Input file was not found.")
+                self.write_log(f"File not found: {input_file}")
+                return
+            if model not in MODEL_SIZES:
+                model = "base"
+
+            if not output_file:
+                output_file = os.path.splitext(input_file)[0] + f".{language}.srt"
+                self.query_one("#output_file", Input).value = output_file
+
+            transcribe_button = self.query_one("#transcribe", Button)
+            transcribe_button.disabled = True
+            self.set_status("Working...")
+            self.write_log(f"Input: {input_file}")
+            self.write_log(f"Language: {language}")
+            self.write_log(f"Model: {model}")
+            self.write_log(f"Output: {output_file}")
+
+            worker = threading.Thread(
+                target=self.transcribe_worker,
+                args=(input_file, output_file, model, language),
+                daemon=True,
+            )
+            worker.start()
+
+        def transcribe_worker(self, input_file, output_file, model, language):
+            base, _ = os.path.splitext(input_file)
+            temp_audio_file = f"{base}.lttc_temp.wav"
+            try:
+                self.call_from_thread(self.write_log, "Checking dependencies...")
+                if not ensure_python_dependencies(prompt=False):
+                    self.call_from_thread(self.set_status, "Dependencies are not ready.")
+                    return
+                if not ensure_ffmpeg_available():
+                    self.call_from_thread(self.set_status, "FFmpeg is not available.")
+                    return
+                self.call_from_thread(self.write_log, "Extracting audio...")
+                if not extract_audio(input_file, temp_audio_file):
+                    self.call_from_thread(self.set_status, "Audio extraction failed.")
+                    return
+                self.call_from_thread(self.write_log, "Transcribing. This can take a while...")
+                transcribe_to_srt(temp_audio_file, output_file, model, language)
+            except Exception as error:
+                self.call_from_thread(self.write_log, f"Error: {error}")
+                self.call_from_thread(self.set_status, "Failed.")
+                return
+            finally:
+                if os.path.exists(temp_audio_file):
+                    os.remove(temp_audio_file)
+                self.call_from_thread(lambda: setattr(self.query_one("#transcribe", Button), "disabled", False))
+
+            self.call_from_thread(self.write_log, "Done.")
+            self.call_from_thread(self.set_status, f"Saved: {output_file}")
+
+    LTTCApp().run()
+    return 0
+
+
 def cli_main(argv=None):
     parser = argparse.ArgumentParser(
         prog="lttc",
@@ -380,13 +609,19 @@ def cli_main(argv=None):
     parser.add_argument("--install-deps", action="store_true", help="Install missing Python dependencies without prompting")
     parser.add_argument("--repair-deps", action="store_true", help="Repair broken Python dependencies without prompting")
     parser.add_argument("--allow-global-install", action="store_true", help="Allow dependency installs/repairs outside a virtual environment")
+    parser.add_argument("--tui", action="store_true", help="Open the Textual terminal UI")
     parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode")
     args = parser.parse_args(argv)
+
+    if args.tui:
+        sys.exit(run_tui())
 
     if args.interactive or not args.input_file:
         if not sys.stdin.isatty() and not args.interactive:
             parser.print_help()
             return
+        if not args.interactive:
+            sys.exit(run_tui())
         interactive_main()
         return
 

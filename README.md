@@ -24,7 +24,7 @@ It is short, direct, and easy to understand. It says what the tool does without 
 - Generates timed captions as `.srt` files
 - Defaults to Bengali (`bn`)
 - Supports Whisper model sizes: `tiny`, `base`, `small`, `medium`, and `large`
-- Includes both command-line and interactive modes
+- Includes command-line, classic interactive, and Textual terminal UI modes
 
 ## Requirements
 
@@ -33,6 +33,8 @@ It is short, direct, and easy to understand. It says what the tool does without 
 - Python packages:
   - `openai-whisper`
   - `pysrt`
+  - `rich`
+  - `textual`
 
 ## Setup
 
@@ -85,6 +87,14 @@ ffmpeg -version
 If that command does not work, install FFmpeg first and add it to your system `PATH`.
 
 ## Usage
+
+Open the terminal UI:
+
+```bash
+python LTTC.py --tui
+```
+
+You can also run `python LTTC.py` from an interactive terminal to open the UI by default.
 
 Run LTTC on a video or audio file:
 

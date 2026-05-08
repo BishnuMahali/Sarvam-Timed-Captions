@@ -1,2 +1,4 @@
 openai-whisper
 pysrt
+rich
+textual
