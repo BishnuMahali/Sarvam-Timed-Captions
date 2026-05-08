@@ -19,6 +19,7 @@ Options:
     --lang/-l <code> : language code (e.g., bn for Bengali, asr for Ashuri, etc)
     --tc             : create timed captions (SRT); default is on if not specified
     --model/-m <sz>  : Whisper model size (tiny, base, small, medium, large)
+    --device <name>  : Whisper device (auto, cuda, cpu)
     --output/-o <f>  : output SRT filename
     --tui            : open the Textual terminal UI
     -i/--interactive : interactive mode (as before)
@@ -61,6 +62,7 @@ REPAIR_DEPENDENCIES = {
 MODEL_SIZES = {"tiny", "base", "small", "medium", "large"}
 BACKENDS = {"whisper", "sarvam"}
 SARVAM_MODES = {"transcribe", "translate", "verbatim", "translit", "codemix"}
+DEVICE_CHOICES = {"auto", "cpu", "cuda", "cuda:0"}
 SARVAM_LANGUAGE_MAP = {
     "as": "as-IN",
     "bn": "bn-IN",
@@ -320,6 +322,73 @@ def ensure_ffmpeg_available():
     print("\n[LTTC] Download: https://ffmpeg.org/download.html")
     return False
 
+
+def detect_hardware_acceleration():
+    info = {
+        "recommended": "cpu",
+        "cuda_available": False,
+        "cuda_device_count": 0,
+        "cuda_devices": [],
+        "error": None,
+    }
+    try:
+        import torch
+    except Exception as error:
+        info["error"] = str(error)
+        return info
+
+    try:
+        info["cuda_available"] = bool(torch.cuda.is_available())
+        info["cuda_device_count"] = int(torch.cuda.device_count()) if info["cuda_available"] else 0
+        for index in range(info["cuda_device_count"]):
+            info["cuda_devices"].append(torch.cuda.get_device_name(index))
+        if info["cuda_available"]:
+            info["recommended"] = "cuda"
+    except Exception as error:
+        info["error"] = str(error)
+    return info
+
+
+def print_hardware_report():
+    info = detect_hardware_acceleration()
+    print("[LTTC] Hardware acceleration check:")
+    if info["cuda_available"]:
+        print(f"  CUDA: available ({info['cuda_device_count']} device(s))")
+        for index, name in enumerate(info["cuda_devices"]):
+            print(f"  - cuda:{index}: {name}")
+        print("  Recommended device: cuda")
+    else:
+        print("  CUDA: not available to PyTorch")
+        print("  Recommended device: cpu")
+    if info["error"]:
+        print(f"  Detection note: {info['error']}")
+    return info
+
+
+def resolve_whisper_device(device="auto"):
+    requested = (device or "auto").lower()
+    if requested == "auto":
+        info = detect_hardware_acceleration()
+        selected = info["recommended"]
+        if selected == "cuda":
+            devices = ", ".join(info["cuda_devices"]) or "CUDA device"
+            print(f"[LTTC] Hardware acceleration available: {devices}. Using CUDA.")
+        else:
+            print("[LTTC] CUDA is not available to PyTorch. Using CPU.")
+        return selected
+
+    if requested.startswith("cuda"):
+        info = detect_hardware_acceleration()
+        if info["cuda_available"]:
+            print(f"[LTTC] Using requested device: {requested}")
+            return requested
+        print(f"[LTTC] Requested {requested}, but CUDA is not available to PyTorch. Falling back to CPU.")
+        return "cpu"
+
+    print("[LTTC] Using CPU.")
+    return "cpu"
+
+
 def extract_audio(video_path, audio_path):
     if not ensure_ffmpeg_available():
         return False
@@ -427,13 +496,14 @@ def save_words_as_srt(words, transcript, srt_path, max_words=12, max_duration=5.
     subs.save(srt_path, encoding="utf-8")
 
 
-def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn"):
+def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn", device="auto"):
     import whisper
     import pysrt
 
-    print(f"[LTTC] Loading Whisper model: {model_size}")
-    model = whisper.load_model(model_size)
-    print(f"[LTTC] Transcribing audio (language: {lang})... (this may take a while)")
+    resolved_device = resolve_whisper_device(device)
+    print(f"[LTTC] Loading Whisper model: {model_size} on {resolved_device}")
+    model = whisper.load_model(model_size, device=resolved_device)
+    print(f"[LTTC] Transcribing audio (language: {lang}, device: {resolved_device})... (this may take a while)")
     result = model.transcribe(audio_path, language=lang)
     subs = pysrt.SubRipFile()
     for i, seg in enumerate(result['segments']):
@@ -488,6 +558,7 @@ def transcribe_file_to_srt(
     lang="bn",
     sarvam_api_key=None,
     sarvam_mode="transcribe",
+    device="auto",
 ):
     base, _ = os.path.splitext(input_file)
     temp_audio_file = f"{base}.lttc_temp.wav"
@@ -497,7 +568,7 @@ def transcribe_file_to_srt(
         if backend == "sarvam":
             transcribe_with_sarvam_to_srt(temp_audio_file, out_srt, lang, sarvam_api_key, sarvam_mode)
         else:
-            transcribe_to_srt(temp_audio_file, out_srt, model_size, lang)
+            transcribe_to_srt(temp_audio_file, out_srt, model_size, lang, device)
     finally:
         if os.path.exists(temp_audio_file):
             os.remove(temp_audio_file)
@@ -533,6 +604,7 @@ def interactive_main():
 
         default_model = "base"
         model_size = default_model
+        device = "auto"
         sarvam_mode = "transcribe"
         sarvam_api_key = None
         if backend == "sarvam":
@@ -556,14 +628,20 @@ def interactive_main():
             model_size = model_size.lower()
             if model_size not in MODEL_SIZES:
                 model_size = default_model
+            device = prompt_text("Choose device ('auto', 'cuda', or 'cpu') [auto]: ", default="auto")
+            if device is None:
+                return
+            device = device.lower()
 
         if not ensure_python_dependencies(dependencies=dependencies_for_backend(backend)):
             return
+        if backend == "whisper":
+            print_hardware_report()
         if not ensure_ffmpeg_available():
             return
 
         try:
-            if not transcribe_file_to_srt(video_file, srt_file, backend, model_size, lang, sarvam_api_key, sarvam_mode):
+            if not transcribe_file_to_srt(video_file, srt_file, backend, model_size, lang, sarvam_api_key, sarvam_mode, device):
                 print("Audio extraction failed. Please try again.\n")
                 continue
         except Exception as e:
@@ -739,6 +817,14 @@ def run_tui():
                         value="base",
                         id="model",
                     )
+                    yield Label(Text("Whisper device", style="bold #67e8f9"), classes="field_label")
+                    with Horizontal():
+                        yield Select(
+                            [("Auto", "auto"), ("CUDA", "cuda"), ("CPU", "cpu")],
+                            value="auto",
+                            id="device",
+                        )
+                        yield Button("Check Hardware", id="hardware", variant="warning")
                     yield Label(Text("Sarvam mode", style="bold #f472b6"), classes="field_label")
                     yield Select(
                         [(mode, mode) for mode in ["transcribe", "translate", "verbatim", "translit", "codemix"]],
@@ -778,6 +864,18 @@ def run_tui():
                     language = self.query_one("#language", Input).value.strip() or "bn"
                     output.value = os.path.splitext(file_path)[0] + f".{language}.srt"
                 return
+            if event.button.id == "hardware":
+                info = detect_hardware_acceleration()
+                if info["cuda_available"]:
+                    devices = ", ".join(info["cuda_devices"]) or "CUDA device"
+                    self.set_status(f"CUDA available: {devices}", "bold #86efac")
+                    self.write_log(f"CUDA available: {devices}")
+                else:
+                    self.set_status("CUDA is not available to PyTorch.", "bold #fbbf24")
+                    self.write_log("CUDA is not available to PyTorch. Whisper will use CPU.")
+                    if info["error"]:
+                        self.write_log(f"Hardware check note: {info['error']}")
+                return
             if event.button.id == "transcribe":
                 self.start_transcription()
 
@@ -786,6 +884,7 @@ def run_tui():
             language = self.query_one("#language", Input).value.strip() or "bn"
             backend = self.query_one("#backend", Select).value or "whisper"
             model = self.query_one("#model", Select).value or "base"
+            device = self.query_one("#device", Select).value or "auto"
             sarvam_mode = self.query_one("#sarvam_mode", Select).value or "transcribe"
             sarvam_api_key = self.query_one("#sarvam_api_key", Input).value.strip()
             output_file = self.query_one("#output_file", Input).value.strip()
@@ -819,16 +918,17 @@ def run_tui():
                 self.write_log(f"Sarvam mode: {sarvam_mode}")
             else:
                 self.write_log(f"Model: {model}")
+                self.write_log(f"Device: {device}")
             self.write_log(f"Output: {output_file}")
 
             worker = threading.Thread(
                 target=self.transcribe_worker,
-                args=(input_file, output_file, backend, model, language, sarvam_api_key, sarvam_mode),
+                args=(input_file, output_file, backend, model, language, sarvam_api_key, sarvam_mode, device),
                 daemon=True,
             )
             worker.start()
 
-        def transcribe_worker(self, input_file, output_file, backend, model, language, sarvam_api_key, sarvam_mode):
+        def transcribe_worker(self, input_file, output_file, backend, model, language, sarvam_api_key, sarvam_mode, device):
             try:
                 self.call_from_thread(self.write_log, "Checking dependencies...")
                 if not ensure_python_dependencies(prompt=False, dependencies=dependencies_for_backend(backend)):
@@ -846,6 +946,7 @@ def run_tui():
                     lang=language,
                     sarvam_api_key=sarvam_api_key or None,
                     sarvam_mode=sarvam_mode,
+                    device=device,
                 ):
                     self.call_from_thread(self.set_status, "Audio extraction failed.", "bold #fb7185")
                     return
@@ -873,15 +974,21 @@ def cli_main(argv=None):
     parser.add_argument("--tc", action="store_true", help="Output timed captions (SRT). Default if not set.")
     parser.add_argument("--backend", choices=sorted(BACKENDS), default="whisper", help="Transcription backend")
     parser.add_argument("--model", "-m", default="base", help="Whisper model (tiny, base, small, medium, large)")
+    parser.add_argument("--device", default="auto", help="Whisper device: auto, cuda, cuda:0, or cpu")
     parser.add_argument("--output", "-o", help="Output SRT filename")
     parser.add_argument("--sarvam-api-key", help="Sarvam API key. Defaults to SARVAM_API_KEY.")
     parser.add_argument("--sarvam-mode", default="transcribe", choices=sorted(SARVAM_MODES), help="Sarvam Saaras v3 output mode")
     parser.add_argument("--install-deps", action="store_true", help="Install missing Python dependencies without prompting")
     parser.add_argument("--repair-deps", action="store_true", help="Repair broken Python dependencies without prompting")
     parser.add_argument("--allow-global-install", action="store_true", help="Allow dependency installs/repairs outside a virtual environment")
+    parser.add_argument("--check-hardware", action="store_true", help="Show available Whisper hardware acceleration and exit")
     parser.add_argument("--tui", action="store_true", help="Open the Textual terminal UI")
     parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode")
     args = parser.parse_args(argv)
+
+    if args.check_hardware:
+        print_hardware_report()
+        return
 
     if args.tui:
         sys.exit(run_tui())
@@ -927,6 +1034,7 @@ def cli_main(argv=None):
             lang=lang,
             sarvam_api_key=args.sarvam_api_key,
             sarvam_mode=args.sarvam_mode,
+            device=args.device,
         ):
             sys.exit(1)
     except Exception as e:

@@ -54,6 +54,12 @@ Install the CPU build of PyTorch first:
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
+If you have an NVIDIA GPU and CUDA available, install the matching CUDA PyTorch build instead of the CPU build. Then verify that LTTC can see it:
+
+```bash
+python LTTC.py --check-hardware
+```
+
 Then install LTTC's Python dependencies:
 
 ```bash
@@ -102,6 +108,13 @@ Run LTTC on a video or audio file:
 
 ```bash
 python LTTC.py "path/to/video.mp4" --lang bn --model base
+```
+
+By default, LTTC uses `--device auto` for local Whisper and will choose CUDA when PyTorch can see an NVIDIA GPU. You can also force a device:
+
+```bash
+python LTTC.py "path/to/video.mp4" --lang bn --model base --device cuda
+python LTTC.py "path/to/video.mp4" --lang bn --model base --device cpu
 ```
 
 Use Sarvam AI instead of local Whisper:
