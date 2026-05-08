@@ -154,6 +154,50 @@ def prompt_text(message, default=None):
     return value or default
 
 
+def browse_for_media_file():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as error:
+        print(f"[LTTC] File browser is not available: {error}")
+        return None
+
+    root = tk.Tk()
+    root.withdraw()
+    root.update()
+    try:
+        file_path = filedialog.askopenfilename(
+            title="Select video or audio file",
+            filetypes=[
+                ("Media files", "*.mp4 *.mkv *.mov *.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
+                ("Video files", "*.mp4 *.mkv *.mov *.avi *.webm"),
+                ("Audio files", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+
+    return file_path or None
+
+
+def prompt_input_file():
+    try:
+        value = input("Enter the path to your video/audio file, press Enter to browse, or type 'q' to quit: ").strip()
+    except EOFError:
+        print("\n[LTTC] No interactive input available.")
+        return None
+
+    if value:
+        return value
+
+    print("[LTTC] Opening file browser...")
+    file_path = browse_for_media_file()
+    if not file_path:
+        print("[LTTC] No file selected.\n")
+    return file_path
+
+
 def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_global_install=False):
     missing, broken = dependency_status()
     if not missing and not broken:
@@ -269,9 +313,9 @@ def interactive_main():
         return
 
     while True:
-        video_file = prompt_text("Enter the path to your video/audio file (or 'q' to quit): ")
+        video_file = prompt_input_file()
         if video_file is None:
-            return
+            continue
         if video_file.lower() == 'q':
             print("Exiting.")
             return

@@ -116,6 +116,8 @@ Use interactive mode:
 python LTTC.py --interactive
 ```
 
+In interactive mode, press Enter at the file path prompt to open a browse window and select a video or audio file.
+
 ## Examples
 
 Generate Bengali captions from a video:
