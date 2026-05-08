@@ -50,6 +50,12 @@ To install missing Python dependencies automatically:
 python LTTC.py --install-deps
 ```
 
+If a package is installed but broken, such as an incomplete PyTorch install on Windows, LTTC will show a repair command. You can run the repair automatically:
+
+```bash
+python LTTC.py --repair-deps
+```
+
 Make sure FFmpeg is installed:
 
 ```bash
@@ -70,6 +76,12 @@ If Python dependencies are missing, install them automatically while running:
 
 ```bash
 python LTTC.py "path/to/video.mp4" --lang bn --install-deps
+```
+
+If Whisper or PyTorch is installed but fails to load, repair dependencies while running:
+
+```bash
+python LTTC.py "path/to/video.mp4" --lang bn --repair-deps
 ```
 
 Choose an output file:

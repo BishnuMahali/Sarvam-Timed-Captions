@@ -41,52 +41,125 @@ PYTHON_DEPENDENCIES = {
     "pysrt": "pysrt",
 }
 
+REPAIR_DEPENDENCIES = {
+    "whisper": ["openai-whisper", "torch"],
+    "pysrt": ["pysrt"],
+}
+
 MODEL_SIZES = {"tiny", "base", "small", "medium", "large"}
 
 
-def missing_python_dependencies():
+def dependency_status():
     missing = []
+    broken = []
     for module_name, package_name in PYTHON_DEPENDENCIES.items():
         try:
             importlib.import_module(module_name)
         except ImportError:
             missing.append(package_name)
-    return missing
+        except Exception as error:
+            broken.append((module_name, package_name, error))
+    return missing, broken
 
 
-def install_python_dependencies(packages):
-    command = [sys.executable, "-m", "pip", "install", *packages]
+def missing_python_dependencies():
+    missing, broken = dependency_status()
+    for module_name, package_name, _ in broken:
+        repair_packages = REPAIR_DEPENDENCIES.get(module_name, [package_name])
+        missing.extend(repair_packages)
+    return list(dict.fromkeys(missing))
+
+
+def repair_python_dependencies(broken):
+    packages = []
+    for module_name, package_name, _ in broken:
+        packages.extend(REPAIR_DEPENDENCIES.get(module_name, [package_name]))
+    return list(dict.fromkeys(packages))
+
+
+def pip_install_command(packages, repair=False):
+    command = [sys.executable, "-m", "pip", "install"]
+    if repair:
+        command.extend(["--upgrade", "--force-reinstall"])
+    command.extend(packages)
+    return command
+
+
+def format_command(command):
+    return " ".join(f'"{part}"' if " " in part else part for part in command)
+
+
+def install_python_dependencies(packages, repair=False):
+    command = pip_install_command(packages, repair=repair)
     print(f"[LTTC] Installing: {' '.join(packages)}")
     return subprocess.run(command).returncode == 0
 
 
-def ensure_python_dependencies(auto_install=False):
-    missing = missing_python_dependencies()
-    if not missing:
+def print_dependency_report(missing, broken):
+    if missing:
+        print("[LTTC] Missing required Python package(s):")
+        for package_name in missing:
+            print(f"  - {package_name}")
+
+    if broken:
+        print("[LTTC] Installed package(s) found, but they failed to load:")
+        for module_name, package_name, error in broken:
+            print(f"  - {package_name} ({module_name}): {error}")
+        print("\n[LTTC] On Windows, this often means PyTorch installed incompletely or from the wrong wheel.")
+        print("[LTTC] Repairing Whisper will also reinstall torch.")
+
+
+def print_install_commands(missing, repair_packages):
+    if missing:
+        install_command = pip_install_command(missing)
+        print(f"\n[LTTC] Install command:\n  {format_command(install_command)}")
+    if repair_packages:
+        repair_command = pip_install_command(repair_packages, repair=True)
+        print(f"\n[LTTC] Repair command:\n  {format_command(repair_command)}")
+
+
+def prompt_yes_no(message):
+    if not sys.stdin.isatty():
+        return False
+    answer = input(message).strip().lower()
+    return answer in {"y", "yes"}
+
+
+def ensure_python_dependencies(auto_install=False, auto_repair=False):
+    missing, broken = dependency_status()
+    if not missing and not broken:
         return True
 
-    install_command = f"{sys.executable} -m pip install {' '.join(missing)}"
-    print("[LTTC] Missing required Python package(s):")
-    for package_name in missing:
-        print(f"  - {package_name}")
-    print(f"\n[LTTC] Install command:\n  {install_command}\n")
+    repair_packages = repair_python_dependencies(broken)
+    print_dependency_report(missing, broken)
+    print_install_commands(missing, repair_packages)
 
-    should_install = auto_install
-    if not should_install and sys.stdin.isatty():
-        answer = input("Install missing Python package(s) now? [y/N]: ").strip().lower()
-        should_install = answer in {"y", "yes"}
+    if missing:
+        should_install = auto_install
+        if not should_install:
+            should_install = prompt_yes_no("\nInstall missing Python package(s) now? [y/N]: ")
+        if not should_install:
+            print("[LTTC] Dependency installation skipped. Install the package(s), then run LTTC again.")
+            return False
+        if not install_python_dependencies(missing):
+            print("[LTTC] Installation failed. Try running the install command above manually.")
+            return False
 
-    if not should_install:
-        print("[LTTC] Dependency installation skipped. Install the package(s), then run LTTC again.")
-        return False
+    if repair_packages:
+        should_repair = auto_install or auto_repair
+        if not should_repair:
+            should_repair = prompt_yes_no("\nRepair broken Python package(s) now? [y/N]: ")
+        if not should_repair:
+            print("[LTTC] Dependency repair skipped. Run the repair command above, then try LTTC again.")
+            return False
+        if not install_python_dependencies(repair_packages, repair=True):
+            print("[LTTC] Repair failed. Try running the repair command above manually.")
+            return False
 
-    if not install_python_dependencies(missing):
-        print("[LTTC] Installation failed. Try running the install command above manually.")
-        return False
-
-    still_missing = missing_python_dependencies()
-    if still_missing:
-        print(f"[LTTC] Still missing after install: {', '.join(still_missing)}")
+    still_missing, still_broken = dependency_status()
+    if still_missing or still_broken:
+        print("[LTTC] Some dependencies are still not ready.")
+        print_dependency_report(still_missing, still_broken)
         return False
 
     print("[LTTC] Python dependencies are ready.")
@@ -209,10 +282,11 @@ def cli_main(argv=None):
     parser.add_argument("--model", "-m", default="base", help="Whisper model (tiny, base, small, medium, large)")
     parser.add_argument("--output", "-o", help="Output SRT filename")
     parser.add_argument("--install-deps", action="store_true", help="Install missing Python dependencies without prompting")
+    parser.add_argument("--repair-deps", action="store_true", help="Repair broken Python dependencies without prompting")
     parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode")
     args = parser.parse_args(argv)
 
-    if not ensure_python_dependencies(auto_install=args.install_deps):
+    if not ensure_python_dependencies(auto_install=args.install_deps, auto_repair=args.repair_deps):
         sys.exit(1)
     if not ensure_ffmpeg_available():
         sys.exit(1)
