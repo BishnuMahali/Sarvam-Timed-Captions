@@ -1,4 +1,7 @@
 """
+Copyright (c) 2026 Bishnu Mahali
+Licensed under the MIT License. See LICENSE for details.
+
 LTTC (Local Transcription & Timed Captions) Toolkit
 
 Transcribe video/audio in under-supported languages into timed captions using OpenAI Whisper.
