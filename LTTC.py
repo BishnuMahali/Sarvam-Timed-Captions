@@ -407,64 +407,98 @@ def run_tui():
         SUB_TITLE = "Local Transcription & Timed Captions"
         CSS = """
         Screen {
-            background: #101418;
-            color: #edf2f7;
+            background: #071014;
+            color: #f8fafc;
+        }
+
+        Header {
+            background: #0f766e;
+            color: #ecfeff;
+            text-style: bold;
+        }
+
+        Footer {
+            background: #111827;
+            color: #93c5fd;
         }
 
         #shell {
-            width: 92%;
+            width: 94%;
             max-width: 110;
             height: auto;
             margin: 1 2;
         }
 
         #hero {
-            height: 6;
+            height: 7;
             padding: 1 2;
-            background: #17202a;
-            border: round #5cc8ff;
+            background: #102027;
+            border: double #f59e0b;
         }
 
         #title {
             text-style: bold;
-            color: #f7fbff;
+            color: #fef3c7;
         }
 
         #tagline {
-            color: #a9b7c6;
+            color: #67e8f9;
+        }
+
+        #hint {
+            color: #fda4af;
         }
 
         #form {
             margin-top: 1;
             padding: 1 2;
-            border: round #3a4654;
-            background: #121820;
+            border: round #22c55e;
+            background: #0f172a;
         }
 
         #log_panel {
             margin-top: 1;
             height: 14;
-            border: round #3a4654;
-            background: #0d1117;
+            color: #d1fae5;
+            border: round #fb7185;
+            background: #0b1120;
         }
 
         .field_label {
             margin-top: 1;
-            color: #cbd5e1;
+            color: #fcd34d;
+            text-style: bold;
         }
 
         Input, Select {
             margin-top: 1;
+            color: #e0f2fe;
+            background: #111827;
+            border: tall #2563eb;
+        }
+
+        Input:focus, Select:focus {
+            border: tall #f97316;
+            background: #172554;
         }
 
         Button {
             margin-top: 1;
             margin-right: 1;
+            text-style: bold;
+        }
+
+        Button:hover {
+            text-style: bold reverse;
         }
 
         #status {
             margin-top: 1;
-            color: #8bd5a5;
+            color: #86efac;
+            text-style: bold;
+            background: #052e16;
+            border-left: thick #22c55e;
+            padding: 0 1;
         }
         """
 
@@ -472,33 +506,42 @@ def run_tui():
             yield Header()
             with Container(id="shell"):
                 with Vertical(id="hero"):
-                    yield Static(Text("LTTC", style="bold #f7fbff"), id="title")
+                    title = Text()
+                    title.append("LTTC", style="bold #fef3c7")
+                    title.append("  Local Transcription & Timed Captions", style="bold #5eead4")
+                    yield Static(title, id="title")
+                    tagline = Text()
+                    tagline.append("Bengali-first", style="bold #f472b6")
+                    tagline.append(" captioning with ", style="#cbd5e1")
+                    tagline.append("Whisper", style="bold #93c5fd")
+                    tagline.append(", local files, and SRT output.", style="#cbd5e1")
+                    yield Static(tagline, id="tagline")
                     yield Static(
                         Text(
-                            "Local Transcription & Timed Captions for Bengali and under-supported languages",
-                            style="#a9b7c6",
+                            "Pick media, choose a model, generate timed captions.",
+                            style="italic #fbbf24",
                         ),
-                        id="tagline",
+                        id="hint",
                     )
                 with Vertical(id="form"):
-                    yield Label("Input media", classes="field_label")
+                    yield Label(Text("Input media", style="bold #fcd34d"), classes="field_label")
                     with Horizontal():
                         yield Input(placeholder="Choose a video/audio file or paste a path", id="input_file")
                         yield Button("Browse", id="browse", variant="primary")
-                    yield Label("Language code", classes="field_label")
+                    yield Label(Text("Language code", style="bold #f472b6"), classes="field_label")
                     yield Input(value="bn", placeholder="bn", id="language")
-                    yield Label("Whisper model", classes="field_label")
+                    yield Label(Text("Whisper model", style="bold #93c5fd"), classes="field_label")
                     yield Select(
                         [(model, model) for model in ["tiny", "base", "small", "medium", "large"]],
                         value="base",
                         id="model",
                     )
-                    yield Label("Output SRT", classes="field_label")
+                    yield Label(Text("Output SRT", style="bold #86efac"), classes="field_label")
                     yield Input(placeholder="Leave empty for input-file.bn.srt", id="output_file")
                     with Horizontal():
                         yield Button("Transcribe", id="transcribe", variant="success")
                         yield Button("Quit", id="quit", variant="error")
-                    yield Static("Ready", id="status")
+                    yield Static(Text("Ready", style="bold #86efac"), id="status")
                 yield Log(id="log_panel", highlight=True)
             yield Footer()
 
@@ -509,8 +552,8 @@ def run_tui():
         def write_log(self, message):
             self.query_one("#log_panel", Log).write_line(str(message))
 
-        def set_status(self, message):
-            self.query_one("#status", Static).update(message)
+        def set_status(self, message, style="bold #86efac"):
+            self.query_one("#status", Static).update(Text(message, style=style))
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             if event.button.id == "quit":
@@ -534,11 +577,11 @@ def run_tui():
             output_file = self.query_one("#output_file", Input).value.strip()
 
             if not input_file:
-                self.set_status("Choose an input file first.")
+                self.set_status("Choose an input file first.", "bold #fbbf24")
                 self.write_log("Input file is required.")
                 return
             if not os.path.isfile(input_file):
-                self.set_status("Input file was not found.")
+                self.set_status("Input file was not found.", "bold #fb7185")
                 self.write_log(f"File not found: {input_file}")
                 return
             if model not in MODEL_SIZES:
@@ -550,7 +593,7 @@ def run_tui():
 
             transcribe_button = self.query_one("#transcribe", Button)
             transcribe_button.disabled = True
-            self.set_status("Working...")
+            self.set_status("Working...", "bold #67e8f9")
             self.write_log(f"Input: {input_file}")
             self.write_log(f"Language: {language}")
             self.write_log(f"Model: {model}")
@@ -569,20 +612,20 @@ def run_tui():
             try:
                 self.call_from_thread(self.write_log, "Checking dependencies...")
                 if not ensure_python_dependencies(prompt=False):
-                    self.call_from_thread(self.set_status, "Dependencies are not ready.")
+                    self.call_from_thread(self.set_status, "Dependencies are not ready.", "bold #fb7185")
                     return
                 if not ensure_ffmpeg_available():
-                    self.call_from_thread(self.set_status, "FFmpeg is not available.")
+                    self.call_from_thread(self.set_status, "FFmpeg is not available.", "bold #fb7185")
                     return
                 self.call_from_thread(self.write_log, "Extracting audio...")
                 if not extract_audio(input_file, temp_audio_file):
-                    self.call_from_thread(self.set_status, "Audio extraction failed.")
+                    self.call_from_thread(self.set_status, "Audio extraction failed.", "bold #fb7185")
                     return
                 self.call_from_thread(self.write_log, "Transcribing. This can take a while...")
                 transcribe_to_srt(temp_audio_file, output_file, model, language)
             except Exception as error:
                 self.call_from_thread(self.write_log, f"Error: {error}")
-                self.call_from_thread(self.set_status, "Failed.")
+                self.call_from_thread(self.set_status, "Failed.", "bold #fb7185")
                 return
             finally:
                 if os.path.exists(temp_audio_file):
@@ -590,7 +633,7 @@ def run_tui():
                 self.call_from_thread(lambda: setattr(self.query_one("#transcribe", Button), "disabled", False))
 
             self.call_from_thread(self.write_log, "Done.")
-            self.call_from_thread(self.set_status, f"Saved: {output_file}")
+            self.call_from_thread(self.set_status, f"Saved: {output_file}", "bold #86efac")
 
     LTTCApp().run()
     return 0
