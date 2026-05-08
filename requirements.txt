@@ -1,4 +1,5 @@
 openai-whisper
 pysrt
 rich
+sarvam-ai
 textual

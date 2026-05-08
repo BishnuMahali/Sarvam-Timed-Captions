@@ -21,6 +21,7 @@ It is short, direct, and easy to understand. It says what the tool does without 
 ## Current Features
 
 - Transcribes video/audio locally using OpenAI Whisper
+- Optionally transcribes using Sarvam AI Saaras v3 for Indian-language ASR
 - Generates timed captions as `.srt` files
 - Defaults to Bengali (`bn`)
 - Supports Whisper model sizes: `tiny`, `base`, `small`, `medium`, and `large`
@@ -34,6 +35,7 @@ It is short, direct, and easy to understand. It says what the tool does without 
   - `openai-whisper`
   - `pysrt`
   - `rich`
+  - `sarvam-ai`
   - `textual`
 
 ## Setup
@@ -101,6 +103,21 @@ Run LTTC on a video or audio file:
 ```bash
 python LTTC.py "path/to/video.mp4" --lang bn --model base
 ```
+
+Use Sarvam AI instead of local Whisper:
+
+```bash
+$env:SARVAM_API_KEY = "your_api_key_here"
+python LTTC.py "path/to/video.mp4" --backend sarvam --lang bn --sarvam-mode transcribe
+```
+
+You can also pass the key directly:
+
+```bash
+python LTTC.py "path/to/video.mp4" --backend sarvam --lang bn --sarvam-api-key "your_api_key_here"
+```
+
+Sarvam uses BCP-47 language codes such as `bn-IN`; LTTC maps `bn` to `bn-IN` automatically. Sarvam's REST API is best for short audio clips; long-video support should later use their batch API.
 
 If Python dependencies are missing, install them automatically while running:
 

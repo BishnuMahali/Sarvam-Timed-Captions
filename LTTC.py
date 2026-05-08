@@ -43,6 +43,11 @@ PYTHON_DEPENDENCIES = {
     "pysrt": "pysrt",
 }
 
+SARVAM_DEPENDENCIES = {
+    "sarvamai": "sarvam-ai",
+    "pysrt": "pysrt",
+}
+
 UI_DEPENDENCIES = {
     "rich": "rich",
     "textual": "textual",
@@ -54,6 +59,34 @@ REPAIR_DEPENDENCIES = {
 }
 
 MODEL_SIZES = {"tiny", "base", "small", "medium", "large"}
+BACKENDS = {"whisper", "sarvam"}
+SARVAM_MODES = {"transcribe", "translate", "verbatim", "translit", "codemix"}
+SARVAM_LANGUAGE_MAP = {
+    "as": "as-IN",
+    "bn": "bn-IN",
+    "brx": "brx-IN",
+    "doi": "doi-IN",
+    "en": "en-IN",
+    "gu": "gu-IN",
+    "hi": "hi-IN",
+    "kn": "kn-IN",
+    "kok": "kok-IN",
+    "ks": "ks-IN",
+    "mai": "mai-IN",
+    "ml": "ml-IN",
+    "mni": "mni-IN",
+    "mr": "mr-IN",
+    "ne": "ne-IN",
+    "od": "od-IN",
+    "or": "od-IN",
+    "pa": "pa-IN",
+    "sa": "sa-IN",
+    "sat": "sat-IN",
+    "sd": "sd-IN",
+    "ta": "ta-IN",
+    "te": "te-IN",
+    "ur": "ur-IN",
+}
 
 
 def in_virtual_environment():
@@ -66,15 +99,16 @@ def print_venv_setup_help():
     print(r"  .\.venv\Scripts\Activate.ps1")
     print("  python -m pip install --upgrade pip")
     print("  python -m pip install torch --index-url https://download.pytorch.org/whl/cpu")
-    print("  python -m pip install openai-whisper pysrt")
+    print("  python -m pip install -r requirements.txt")
     print("\n[LTTC] Then run LTTC from the activated environment:")
     print('  python LTTC.py "path/to/video.mp4" --lang bn')
 
 
-def dependency_status():
+def dependency_status(dependencies=None):
+    dependencies = dependencies or PYTHON_DEPENDENCIES
     missing = []
     broken = []
-    for module_name, package_name in PYTHON_DEPENDENCIES.items():
+    for module_name, package_name in dependencies.items():
         try:
             importlib.import_module(module_name)
         except ImportError:
@@ -94,8 +128,14 @@ def missing_ui_dependencies():
     return missing
 
 
-def missing_python_dependencies():
-    missing, broken = dependency_status()
+def dependencies_for_backend(backend):
+    if backend == "sarvam":
+        return SARVAM_DEPENDENCIES
+    return PYTHON_DEPENDENCIES
+
+
+def missing_python_dependencies(dependencies=None):
+    missing, broken = dependency_status(dependencies)
     for module_name, package_name, _ in broken:
         repair_packages = REPAIR_DEPENDENCIES.get(module_name, [package_name])
         missing.extend(repair_packages)
@@ -215,8 +255,14 @@ def prompt_input_file():
     return file_path
 
 
-def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_global_install=False, prompt=True):
-    missing, broken = dependency_status()
+def ensure_python_dependencies(
+    auto_install=False,
+    auto_repair=False,
+    allow_global_install=False,
+    prompt=True,
+    dependencies=None,
+):
+    missing, broken = dependency_status(dependencies)
     if not missing and not broken:
         return True
 
@@ -254,7 +300,7 @@ def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_glob
             print("[LTTC] Repair failed. Try running the repair command above manually.")
             return False
 
-    still_missing, still_broken = dependency_status()
+    still_missing, still_broken = dependency_status(dependencies)
     if still_missing or still_broken:
         print("[LTTC] Some dependencies are still not ready.")
         print_dependency_report(still_missing, still_broken)
@@ -298,6 +344,89 @@ def extract_audio(video_path, audio_path):
         return False
     return True
 
+
+def read_value(item, key, default=None):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def normalize_sarvam_language(lang):
+    if not lang:
+        return "bn-IN"
+    if lang.lower() == "unknown":
+        return "unknown"
+    if "-" in lang:
+        return lang
+    return SARVAM_LANGUAGE_MAP.get(lang.lower(), lang)
+
+
+def words_from_sarvam_timestamps(timestamps):
+    if not timestamps:
+        return []
+    words = read_value(timestamps, "words", [])
+    normalized = []
+    for word in words or []:
+        text = read_value(word, "word") or read_value(word, "text") or read_value(word, "value")
+        start = read_value(word, "start_time_seconds", read_value(word, "start", None))
+        end = read_value(word, "end_time_seconds", read_value(word, "end", None))
+        if text is None or start is None or end is None:
+            continue
+        normalized.append({"text": str(text), "start": float(start), "end": float(end)})
+    return normalized
+
+
+def save_words_as_srt(words, transcript, srt_path, max_words=12, max_duration=5.0):
+    import pysrt
+
+    subs = pysrt.SubRipFile()
+    if not words:
+        text = (transcript or "").strip()
+        if text:
+            subs.append(
+                pysrt.SubRipItem(
+                    index=1,
+                    start=pysrt.SubRipTime(seconds=0),
+                    end=pysrt.SubRipTime(seconds=5),
+                    text=text,
+                )
+            )
+        subs.save(srt_path, encoding="utf-8")
+        return
+
+    chunk = []
+    chunk_start = words[0]["start"]
+    chunk_end = words[0]["end"]
+    for word in words:
+        would_be_long = word["end"] - chunk_start > max_duration
+        would_be_many = len(chunk) >= max_words
+        if chunk and (would_be_long or would_be_many):
+            subs.append(
+                pysrt.SubRipItem(
+                    index=len(subs) + 1,
+                    start=pysrt.SubRipTime(seconds=chunk_start),
+                    end=pysrt.SubRipTime(seconds=chunk_end),
+                    text=" ".join(chunk).strip(),
+                )
+            )
+            chunk = []
+            chunk_start = word["start"]
+        chunk.append(word["text"])
+        chunk_end = word["end"]
+
+    if chunk:
+        subs.append(
+            pysrt.SubRipItem(
+                index=len(subs) + 1,
+                start=pysrt.SubRipTime(seconds=chunk_start),
+                end=pysrt.SubRipTime(seconds=chunk_end),
+                text=" ".join(chunk).strip(),
+            )
+        )
+
+    subs.save(srt_path, encoding="utf-8")
+
+
 def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn"):
     import whisper
     import pysrt
@@ -321,14 +450,62 @@ def transcribe_to_srt(audio_path, srt_path, model_size="base", lang="bn"):
     subs.save(srt_path, encoding="utf-8")
     print(f"[LTTC] SRT file saved as: {srt_path}")
 
+
+def transcribe_with_sarvam_to_srt(audio_path, srt_path, lang="bn", api_key=None, mode="transcribe"):
+    from sarvamai import SarvamAI
+
+    api_key = api_key or os.environ.get("SARVAM_API_KEY") or os.environ.get("SARVAM_API_SUBSCRIPTION_KEY")
+    if not api_key:
+        raise ValueError("Sarvam API key missing. Set SARVAM_API_KEY or pass --sarvam-api-key.")
+
+    language_code = normalize_sarvam_language(lang)
+    if mode not in SARVAM_MODES:
+        mode = "transcribe"
+
+    print(f"[LTTC] Transcribing with Sarvam Saaras v3 (language: {language_code}, mode: {mode})...")
+    client = SarvamAI(api_subscription_key=api_key)
+    with open(audio_path, "rb") as audio_file:
+        response = client.speech_to_text.transcribe(
+            file=audio_file,
+            model="saaras:v3",
+            mode=mode,
+            language_code=language_code,
+            with_timestamps=True,
+        )
+
+    transcript = read_value(response, "transcript", "")
+    timestamps = read_value(response, "timestamps", None)
+    words = words_from_sarvam_timestamps(timestamps)
+    save_words_as_srt(words, transcript, srt_path)
+    print(f"[LTTC] SRT file saved as: {srt_path}")
+
+
+def transcribe_file_to_srt(
+    input_file,
+    out_srt,
+    backend="whisper",
+    model_size="base",
+    lang="bn",
+    sarvam_api_key=None,
+    sarvam_mode="transcribe",
+):
+    base, _ = os.path.splitext(input_file)
+    temp_audio_file = f"{base}.lttc_temp.wav"
+    try:
+        if not extract_audio(input_file, temp_audio_file):
+            return False
+        if backend == "sarvam":
+            transcribe_with_sarvam_to_srt(temp_audio_file, out_srt, lang, sarvam_api_key, sarvam_mode)
+        else:
+            transcribe_to_srt(temp_audio_file, out_srt, model_size, lang)
+    finally:
+        if os.path.exists(temp_audio_file):
+            os.remove(temp_audio_file)
+    return True
+
 def interactive_main():
     print("==== LTTC: Local Transcription & Timed Captions Toolkit ====")
     print("Transcribe audio or video to timed captions for under-supported languages.\n")
-    if not ensure_python_dependencies():
-        return
-    if not ensure_ffmpeg_available():
-        return
-
     while True:
         video_file = prompt_input_file()
         if video_file is None:
@@ -343,37 +520,55 @@ def interactive_main():
         lang = prompt_text("Enter language code (e.g. bn): ", default="bn")
         if lang is None:
             return
+        backend = prompt_text("Choose backend ('whisper' or 'sarvam') [whisper]: ", default="whisper")
+        if backend is None:
+            return
+        backend = backend.lower()
+        if backend not in BACKENDS:
+            backend = "whisper"
         default_srt = os.path.splitext(video_file)[0] + f".{lang}.srt"
         srt_file = prompt_text(f"Enter output SRT filename [{default_srt}]: ", default=default_srt)
         if srt_file is None:
             return
 
         default_model = "base"
-        model_size = prompt_text(
-            f"Choose Whisper model size ('tiny', 'base', 'small', 'medium', 'large') [{default_model}]: ",
-            default=default_model,
-        )
-        if model_size is None:
-            return
-        model_size = model_size.lower()
-        if model_size not in MODEL_SIZES:
-            model_size = default_model
+        model_size = default_model
+        sarvam_mode = "transcribe"
+        sarvam_api_key = None
+        if backend == "sarvam":
+            sarvam_mode = prompt_text("Choose Sarvam mode ('transcribe', 'translate', 'verbatim', 'translit', 'codemix') [transcribe]: ", default="transcribe")
+            if sarvam_mode is None:
+                return
+            sarvam_mode = sarvam_mode.lower()
+            if sarvam_mode not in SARVAM_MODES:
+                sarvam_mode = "transcribe"
+            if not os.environ.get("SARVAM_API_KEY") and not os.environ.get("SARVAM_API_SUBSCRIPTION_KEY"):
+                sarvam_api_key = prompt_text("Enter Sarvam API key (or set SARVAM_API_KEY): ")
+                if sarvam_api_key is None:
+                    return
+        else:
+            model_size = prompt_text(
+                f"Choose Whisper model size ('tiny', 'base', 'small', 'medium', 'large') [{default_model}]: ",
+                default=default_model,
+            )
+            if model_size is None:
+                return
+            model_size = model_size.lower()
+            if model_size not in MODEL_SIZES:
+                model_size = default_model
 
-        temp_audio_file = "temp_audio.wav"
-        if not extract_audio(video_file, temp_audio_file):
-            print("Audio extraction failed. Please try again.\n")
-            continue
+        if not ensure_python_dependencies(dependencies=dependencies_for_backend(backend)):
+            return
+        if not ensure_ffmpeg_available():
+            return
 
         try:
-            transcribe_to_srt(temp_audio_file, srt_file, model_size, lang)
+            if not transcribe_file_to_srt(video_file, srt_file, backend, model_size, lang, sarvam_api_key, sarvam_mode):
+                print("Audio extraction failed. Please try again.\n")
+                continue
         except Exception as e:
             print(f"An error occurred during transcription: {e}")
-            if os.path.exists(temp_audio_file):
-                os.remove(temp_audio_file)
             continue
-
-        if os.path.exists(temp_audio_file):
-            os.remove(temp_audio_file)
         print(f"SRT file created: {srt_file}\n")
 
         repeat = prompt_text("Transcribe another file? (y/n): ", default="n")
@@ -514,6 +709,8 @@ def run_tui():
                     tagline.append("Bengali-first", style="bold #f472b6")
                     tagline.append(" captioning with ", style="#cbd5e1")
                     tagline.append("Whisper", style="bold #93c5fd")
+                    tagline.append(" or ", style="#cbd5e1")
+                    tagline.append("Sarvam", style="bold #f472b6")
                     tagline.append(", local files, and SRT output.", style="#cbd5e1")
                     yield Static(tagline, id="tagline")
                     yield Static(
@@ -530,12 +727,26 @@ def run_tui():
                         yield Button("Browse", id="browse", variant="primary")
                     yield Label(Text("Language code", style="bold #f472b6"), classes="field_label")
                     yield Input(value="bn", placeholder="bn", id="language")
+                    yield Label(Text("Backend", style="bold #f97316"), classes="field_label")
+                    yield Select(
+                        [("Whisper local", "whisper"), ("Sarvam API", "sarvam")],
+                        value="whisper",
+                        id="backend",
+                    )
                     yield Label(Text("Whisper model", style="bold #93c5fd"), classes="field_label")
                     yield Select(
                         [(model, model) for model in ["tiny", "base", "small", "medium", "large"]],
                         value="base",
                         id="model",
                     )
+                    yield Label(Text("Sarvam mode", style="bold #f472b6"), classes="field_label")
+                    yield Select(
+                        [(mode, mode) for mode in ["transcribe", "translate", "verbatim", "translit", "codemix"]],
+                        value="transcribe",
+                        id="sarvam_mode",
+                    )
+                    yield Label(Text("Sarvam API key", style="bold #fb7185"), classes="field_label")
+                    yield Input(placeholder="Optional if SARVAM_API_KEY is set", password=True, id="sarvam_api_key")
                     yield Label(Text("Output SRT", style="bold #86efac"), classes="field_label")
                     yield Input(placeholder="Leave empty for input-file.bn.srt", id="output_file")
                     with Horizontal():
@@ -573,7 +784,10 @@ def run_tui():
         def start_transcription(self):
             input_file = self.query_one("#input_file", Input).value.strip()
             language = self.query_one("#language", Input).value.strip() or "bn"
+            backend = self.query_one("#backend", Select).value or "whisper"
             model = self.query_one("#model", Select).value or "base"
+            sarvam_mode = self.query_one("#sarvam_mode", Select).value or "transcribe"
+            sarvam_api_key = self.query_one("#sarvam_api_key", Input).value.strip()
             output_file = self.query_one("#output_file", Input).value.strip()
 
             if not input_file:
@@ -584,8 +798,12 @@ def run_tui():
                 self.set_status("Input file was not found.", "bold #fb7185")
                 self.write_log(f"File not found: {input_file}")
                 return
+            if backend not in BACKENDS:
+                backend = "whisper"
             if model not in MODEL_SIZES:
                 model = "base"
+            if sarvam_mode not in SARVAM_MODES:
+                sarvam_mode = "transcribe"
 
             if not output_file:
                 output_file = os.path.splitext(input_file)[0] + f".{language}.srt"
@@ -596,40 +814,46 @@ def run_tui():
             self.set_status("Working...", "bold #67e8f9")
             self.write_log(f"Input: {input_file}")
             self.write_log(f"Language: {language}")
-            self.write_log(f"Model: {model}")
+            self.write_log(f"Backend: {backend}")
+            if backend == "sarvam":
+                self.write_log(f"Sarvam mode: {sarvam_mode}")
+            else:
+                self.write_log(f"Model: {model}")
             self.write_log(f"Output: {output_file}")
 
             worker = threading.Thread(
                 target=self.transcribe_worker,
-                args=(input_file, output_file, model, language),
+                args=(input_file, output_file, backend, model, language, sarvam_api_key, sarvam_mode),
                 daemon=True,
             )
             worker.start()
 
-        def transcribe_worker(self, input_file, output_file, model, language):
-            base, _ = os.path.splitext(input_file)
-            temp_audio_file = f"{base}.lttc_temp.wav"
+        def transcribe_worker(self, input_file, output_file, backend, model, language, sarvam_api_key, sarvam_mode):
             try:
                 self.call_from_thread(self.write_log, "Checking dependencies...")
-                if not ensure_python_dependencies(prompt=False):
+                if not ensure_python_dependencies(prompt=False, dependencies=dependencies_for_backend(backend)):
                     self.call_from_thread(self.set_status, "Dependencies are not ready.", "bold #fb7185")
                     return
                 if not ensure_ffmpeg_available():
                     self.call_from_thread(self.set_status, "FFmpeg is not available.", "bold #fb7185")
                     return
-                self.call_from_thread(self.write_log, "Extracting audio...")
-                if not extract_audio(input_file, temp_audio_file):
+                self.call_from_thread(self.write_log, "Extracting audio and transcribing...")
+                if not transcribe_file_to_srt(
+                    input_file,
+                    output_file,
+                    backend=backend,
+                    model_size=model,
+                    lang=language,
+                    sarvam_api_key=sarvam_api_key or None,
+                    sarvam_mode=sarvam_mode,
+                ):
                     self.call_from_thread(self.set_status, "Audio extraction failed.", "bold #fb7185")
                     return
-                self.call_from_thread(self.write_log, "Transcribing. This can take a while...")
-                transcribe_to_srt(temp_audio_file, output_file, model, language)
             except Exception as error:
                 self.call_from_thread(self.write_log, f"Error: {error}")
                 self.call_from_thread(self.set_status, "Failed.", "bold #fb7185")
                 return
             finally:
-                if os.path.exists(temp_audio_file):
-                    os.remove(temp_audio_file)
                 self.call_from_thread(lambda: setattr(self.query_one("#transcribe", Button), "disabled", False))
 
             self.call_from_thread(self.write_log, "Done.")
@@ -647,8 +871,11 @@ def cli_main(argv=None):
     parser.add_argument("input_file", nargs="?", help="Input audio/video file")
     parser.add_argument("--lang", "-l", default="bn", help="Language code for transcription (e.g. bn, asr)")
     parser.add_argument("--tc", action="store_true", help="Output timed captions (SRT). Default if not set.")
+    parser.add_argument("--backend", choices=sorted(BACKENDS), default="whisper", help="Transcription backend")
     parser.add_argument("--model", "-m", default="base", help="Whisper model (tiny, base, small, medium, large)")
     parser.add_argument("--output", "-o", help="Output SRT filename")
+    parser.add_argument("--sarvam-api-key", help="Sarvam API key. Defaults to SARVAM_API_KEY.")
+    parser.add_argument("--sarvam-mode", default="transcribe", choices=sorted(SARVAM_MODES), help="Sarvam Saaras v3 output mode")
     parser.add_argument("--install-deps", action="store_true", help="Install missing Python dependencies without prompting")
     parser.add_argument("--repair-deps", action="store_true", help="Repair broken Python dependencies without prompting")
     parser.add_argument("--allow-global-install", action="store_true", help="Allow dependency installs/repairs outside a virtual environment")
@@ -672,6 +899,7 @@ def cli_main(argv=None):
         auto_install=args.install_deps,
         auto_repair=args.repair_deps,
         allow_global_install=args.allow_global_install,
+        dependencies=dependencies_for_backend(args.backend),
     ):
         sys.exit(1)
     if not ensure_ffmpeg_available():
@@ -687,20 +915,23 @@ def cli_main(argv=None):
     if model_size not in MODEL_SIZES:
         print(f"[LTTC] Invalid model size '{model_size}', falling back to 'base'.")
         model_size = "base"
-    base, ext = os.path.splitext(input_file)
+    base, _ = os.path.splitext(input_file)
     out_srt = args.output or f"{base}.{lang}.srt"
 
-    temp_audio_file = f"{base}.lttc_temp.wav"
     try:
-        if not extract_audio(input_file, temp_audio_file):
+        if not transcribe_file_to_srt(
+            input_file,
+            out_srt,
+            backend=args.backend,
+            model_size=model_size,
+            lang=lang,
+            sarvam_api_key=args.sarvam_api_key,
+            sarvam_mode=args.sarvam_mode,
+        ):
             sys.exit(1)
-        transcribe_to_srt(temp_audio_file, out_srt, model_size, lang)
     except Exception as e:
         print(f"[LTTC] Error during processing: {e}")
         sys.exit(2)
-    finally:
-        if os.path.exists(temp_audio_file):
-            os.remove(temp_audio_file)
 
 def main():
     cli_main()
