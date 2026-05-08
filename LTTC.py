@@ -42,11 +42,26 @@ PYTHON_DEPENDENCIES = {
 }
 
 REPAIR_DEPENDENCIES = {
-    "whisper": ["openai-whisper", "torch"],
+    "whisper": ["torch", "openai-whisper"],
     "pysrt": ["pysrt"],
 }
 
 MODEL_SIZES = {"tiny", "base", "small", "medium", "large"}
+
+
+def in_virtual_environment():
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def print_venv_setup_help():
+    print("[LTTC] Recommended isolated setup on Windows:")
+    print('  py -3.10 -m venv .venv')
+    print(r"  .\.venv\Scripts\Activate.ps1")
+    print("  python -m pip install --upgrade pip")
+    print("  python -m pip install torch --index-url https://download.pytorch.org/whl/cpu")
+    print("  python -m pip install openai-whisper pysrt")
+    print("\n[LTTC] Then run LTTC from the activated environment:")
+    print('  python LTTC.py "path/to/video.mp4" --lang bn')
 
 
 def dependency_status():
@@ -107,6 +122,8 @@ def print_dependency_report(missing, broken):
             print(f"  - {package_name} ({module_name}): {error}")
         print("\n[LTTC] On Windows, this often means PyTorch installed incompletely or from the wrong wheel.")
         print("[LTTC] Repairing Whisper will also reinstall torch.")
+        if not in_virtual_environment():
+            print("[LTTC] You are not inside a virtual environment, so global repair may conflict with other ML packages.")
 
 
 def print_install_commands(missing, repair_packages):
@@ -121,11 +138,23 @@ def print_install_commands(missing, repair_packages):
 def prompt_yes_no(message):
     if not sys.stdin.isatty():
         return False
-    answer = input(message).strip().lower()
+    try:
+        answer = input(message).strip().lower()
+    except EOFError:
+        return False
     return answer in {"y", "yes"}
 
 
-def ensure_python_dependencies(auto_install=False, auto_repair=False):
+def prompt_text(message, default=None):
+    try:
+        value = input(message).strip()
+    except EOFError:
+        print("\n[LTTC] No interactive input available.")
+        return None
+    return value or default
+
+
+def ensure_python_dependencies(auto_install=False, auto_repair=False, allow_global_install=False):
     missing, broken = dependency_status()
     if not missing and not broken:
         return True
@@ -133,6 +162,14 @@ def ensure_python_dependencies(auto_install=False, auto_repair=False):
     repair_packages = repair_python_dependencies(broken)
     print_dependency_report(missing, broken)
     print_install_commands(missing, repair_packages)
+
+    can_modify_environment = in_virtual_environment() or allow_global_install
+    if (missing or repair_packages) and not can_modify_environment:
+        print("\n[LTTC] Automatic dependency changes are disabled outside a virtual environment.")
+        print("[LTTC] This protects other Python/ML projects from package conflicts.")
+        print_venv_setup_help()
+        print("\n[LTTC] Advanced override: add --allow-global-install if you intentionally want LTTC to modify global Python.")
+        return False
 
     if missing:
         should_install = auto_install
@@ -232,7 +269,9 @@ def interactive_main():
         return
 
     while True:
-        video_file = input("Enter the path to your video/audio file (or 'q' to quit): ").strip()
+        video_file = prompt_text("Enter the path to your video/audio file (or 'q' to quit): ")
+        if video_file is None:
+            return
         if video_file.lower() == 'q':
             print("Exiting.")
             return
@@ -240,12 +279,22 @@ def interactive_main():
             print(f"File not found: {video_file}\n")
             continue
 
-        lang = input("Enter language code (e.g. bn): ").strip() or "bn"
+        lang = prompt_text("Enter language code (e.g. bn): ", default="bn")
+        if lang is None:
+            return
         default_srt = os.path.splitext(video_file)[0] + f".{lang}.srt"
-        srt_file = input(f"Enter output SRT filename [{default_srt}]: ").strip() or default_srt
+        srt_file = prompt_text(f"Enter output SRT filename [{default_srt}]: ", default=default_srt)
+        if srt_file is None:
+            return
 
         default_model = "base"
-        model_size = input(f"Choose Whisper model size ('tiny', 'base', 'small', 'medium', 'large') [{default_model}]: ").strip().lower() or default_model
+        model_size = prompt_text(
+            f"Choose Whisper model size ('tiny', 'base', 'small', 'medium', 'large') [{default_model}]: ",
+            default=default_model,
+        )
+        if model_size is None:
+            return
+        model_size = model_size.lower()
         if model_size not in MODEL_SIZES:
             model_size = default_model
 
@@ -266,7 +315,10 @@ def interactive_main():
             os.remove(temp_audio_file)
         print(f"SRT file created: {srt_file}\n")
 
-        repeat = input("Transcribe another file? (y/n): ").strip().lower()
+        repeat = prompt_text("Transcribe another file? (y/n): ", default="n")
+        if repeat is None:
+            return
+        repeat = repeat.lower()
         if repeat != 'y':
             print("Thank you for using LTTC.")
             break
@@ -283,17 +335,25 @@ def cli_main(argv=None):
     parser.add_argument("--output", "-o", help="Output SRT filename")
     parser.add_argument("--install-deps", action="store_true", help="Install missing Python dependencies without prompting")
     parser.add_argument("--repair-deps", action="store_true", help="Repair broken Python dependencies without prompting")
+    parser.add_argument("--allow-global-install", action="store_true", help="Allow dependency installs/repairs outside a virtual environment")
     parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode")
     args = parser.parse_args(argv)
 
-    if not ensure_python_dependencies(auto_install=args.install_deps, auto_repair=args.repair_deps):
+    if args.interactive or not args.input_file:
+        if not sys.stdin.isatty() and not args.interactive:
+            parser.print_help()
+            return
+        interactive_main()
+        return
+
+    if not ensure_python_dependencies(
+        auto_install=args.install_deps,
+        auto_repair=args.repair_deps,
+        allow_global_install=args.allow_global_install,
+    ):
         sys.exit(1)
     if not ensure_ffmpeg_available():
         sys.exit(1)
-
-    if args.interactive or not args.input_file:
-        interactive_main()
-        return
 
     input_file = args.input_file
     if not os.path.isfile(input_file):

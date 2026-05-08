@@ -36,24 +36,44 @@ It is short, direct, and easy to understand. It says what the tool does without 
 
 ## Setup
 
-Clone the repository, then install the Python dependencies:
+Clone the repository, then create an isolated virtual environment. This is strongly recommended because Whisper depends on PyTorch, and PyTorch can conflict with other ML packages installed in global Python.
 
 ```bash
-pip install openai-whisper pysrt
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 ```
 
-LTTC can also help install missing Python packages when it starts. If a required package is missing, interactive runs will ask whether to install it.
+Install the CPU build of PyTorch first:
 
-To install missing Python dependencies automatically:
+```bash
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+Then install LTTC's Python dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+LTTC can also help install missing Python packages when it starts. If a required package is missing, interactive runs inside a virtual environment will ask whether to install it.
+
+To install missing Python dependencies automatically inside a virtual environment:
 
 ```bash
 python LTTC.py --install-deps
 ```
 
-If a package is installed but broken, such as an incomplete PyTorch install on Windows, LTTC will show a repair command. You can run the repair automatically:
+If a package is installed but broken, such as an incomplete PyTorch install on Windows, LTTC will show a repair command. You can run the repair automatically inside a virtual environment:
 
 ```bash
 python LTTC.py --repair-deps
+```
+
+LTTC avoids automatic dependency changes in global Python by default. If you intentionally want to modify global Python, use:
+
+```bash
+python LTTC.py --repair-deps --allow-global-install
 ```
 
 Make sure FFmpeg is installed:
