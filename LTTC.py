@@ -703,8 +703,8 @@ def run_tui():
         }
 
         #hero {
-            height: 7;
-            padding: 1 2;
+            height: 8;
+            padding: 1 3;
             background: #102027;
             border: double #f59e0b;
         }
@@ -724,27 +724,46 @@ def run_tui():
 
         #form {
             margin-top: 1;
-            padding: 1 2;
+            padding: 1 3;
             border: round #22c55e;
             background: #0f172a;
         }
 
         #log_panel {
             margin-top: 1;
-            height: 14;
+            height: 12;
             color: #d1fae5;
             border: round #fb7185;
             background: #0b1120;
         }
 
-        .field_label {
+        .section_title {
             margin-top: 1;
+            margin-bottom: 1;
+            color: #67e8f9;
+            text-style: bold;
+        }
+
+        .field_label {
+            margin-top: 2;
+            margin-bottom: 1;
             color: #fcd34d;
             text-style: bold;
         }
 
+        .field_hint {
+            margin-bottom: 1;
+            color: #94a3b8;
+            text-style: italic;
+        }
+
+        .spacer {
+            height: 1;
+        }
+
         Input, Select {
-            margin-top: 1;
+            margin-top: 0;
+            margin-bottom: 1;
             color: #e0f2fe;
             background: #111827;
             border: tall #2563eb;
@@ -758,6 +777,7 @@ def run_tui():
         Button {
             margin-top: 1;
             margin-right: 1;
+            min-width: 18;
             text-style: bold;
         }
 
@@ -766,14 +786,31 @@ def run_tui():
         }
 
         #status {
-            margin-top: 1;
+            margin-top: 2;
+            margin-bottom: 1;
             color: #86efac;
             text-style: bold;
             background: #052e16;
             border-left: thick #22c55e;
-            padding: 0 1;
+            padding: 1 2;
         }
         """
+
+        def question_text(self, label, detail=None, accent="#fcd34d"):
+            text = Text()
+            text.append("  ?  ", style="bold #f97316")
+            text.append(label, style=f"bold {accent}")
+            if detail:
+                text.append(f"  {detail}", style="#94a3b8")
+            return text
+
+        def section_text(self, title):
+            text = Text()
+            text.append("  --  ", style="bold #fb7185")
+            text.append(title.upper(), style="bold #67e8f9")
+            text.append("  ", style="#fb7185")
+            text.append("-" * 46, style="#334155")
+            return text
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -799,25 +836,29 @@ def run_tui():
                         id="hint",
                     )
                 with Vertical(id="form"):
-                    yield Label(Text("Input media", style="bold #fcd34d"), classes="field_label")
+                    yield Static(self.section_text("Source"), classes="section_title")
+                    yield Label(self.question_text("Input media", "paste a path or browse", "#fcd34d"), classes="field_label")
                     with Horizontal():
                         yield Input(placeholder="Choose a video/audio file or paste a path", id="input_file")
                         yield Button("Browse", id="browse", variant="primary")
-                    yield Label(Text("Language code", style="bold #f472b6"), classes="field_label")
+                    yield Static(Text("     Examples: bn, bn-IN, hi, en", style="#94a3b8 italic"), classes="field_hint")
+
+                    yield Static(self.section_text("Transcription"), classes="section_title")
+                    yield Label(self.question_text("Language code", "Bengali defaults to bn", "#f472b6"), classes="field_label")
                     yield Input(value="bn", placeholder="bn", id="language")
-                    yield Label(Text("Backend", style="bold #f97316"), classes="field_label")
+                    yield Label(self.question_text("Backend", "local Whisper or Sarvam API", "#f97316"), classes="field_label")
                     yield Select(
                         [("Whisper local", "whisper"), ("Sarvam API", "sarvam")],
                         value="whisper",
                         id="backend",
                     )
-                    yield Label(Text("Whisper model", style="bold #93c5fd"), classes="field_label")
+                    yield Label(self.question_text("Whisper model", "larger is slower but usually better", "#93c5fd"), classes="field_label")
                     yield Select(
                         [(model, model) for model in ["tiny", "base", "small", "medium", "large"]],
                         value="base",
                         id="model",
                     )
-                    yield Label(Text("Whisper device", style="bold #67e8f9"), classes="field_label")
+                    yield Label(self.question_text("Whisper device", "auto uses CUDA when PyTorch can see it", "#67e8f9"), classes="field_label")
                     with Horizontal():
                         yield Select(
                             [("Auto", "auto"), ("CUDA", "cuda"), ("CPU", "cpu")],
@@ -825,16 +866,19 @@ def run_tui():
                             id="device",
                         )
                         yield Button("Check Hardware", id="hardware", variant="warning")
-                    yield Label(Text("Sarvam mode", style="bold #f472b6"), classes="field_label")
+                    yield Label(self.question_text("Sarvam mode", "used only with Sarvam API backend", "#f472b6"), classes="field_label")
                     yield Select(
                         [(mode, mode) for mode in ["transcribe", "translate", "verbatim", "translit", "codemix"]],
                         value="transcribe",
                         id="sarvam_mode",
                     )
-                    yield Label(Text("Sarvam API key", style="bold #fb7185"), classes="field_label")
+                    yield Label(self.question_text("Sarvam API key", "optional if SARVAM_API_KEY is set", "#fb7185"), classes="field_label")
                     yield Input(placeholder="Optional if SARVAM_API_KEY is set", password=True, id="sarvam_api_key")
-                    yield Label(Text("Output SRT", style="bold #86efac"), classes="field_label")
+
+                    yield Static(self.section_text("Output"), classes="section_title")
+                    yield Label(self.question_text("Output SRT", "leave blank for automatic name", "#86efac"), classes="field_label")
                     yield Input(placeholder="Leave empty for input-file.bn.srt", id="output_file")
+                    yield Static("", classes="spacer")
                     with Horizontal():
                         yield Button("Transcribe", id="transcribe", variant="success")
                         yield Button("Quit", id="quit", variant="error")
