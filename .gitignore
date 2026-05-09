@@ -4,16 +4,20 @@ __pycache__/
 .venv/
 venv/
 env/
+build/
+dist/
+
+# Config and secrets
+.lttc_config.json
+.stc_config.json
+.sarvam_key
 
 # Generated media/transcription outputs
 *.srt
 *.vtt
 *.lttc_temp.wav
 temp_audio.wav
-
-# Local/editor files
-.env
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
+temp_audio_full.wav
+temp_c_*.wav
+chunk_*.wav
+c_*.wav

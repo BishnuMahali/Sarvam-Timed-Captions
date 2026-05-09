@@ -1,210 +1,58 @@
-# LTTC
+# Sarvam Timed Captions (STC)
 
-**Local Transcription & Timed Captions**
+A professional desktop application to generate highly accurate timed captions (.srt) from video and audio files. Primarily powered by the **Sarvam AI Cloud API** for superior Bengali accuracy, with **OpenAI Whisper** as a free local fallback.
 
-LTTC is a local-first transcription and captioning tool for video/audio files in languages that are poorly supported by mainstream editing software. The project starts with Bengali (`bn`) and is intended to grow into a practical workflow for creators who need timed transcripts and caption files without depending on an editor's built-in language support.
+## 🌟 Key Features
 
-## Why LTTC Exists
+- **Professional Accuracy**: Uses Sarvam AI's specialized models for high-quality Indic language transcription.
+- **Smart Slicing**: Automatically handles audio chunking (5-second intervals) to provide granular, well-timed captions.
+- **Dual-Engine Strategy**: 
+    - **Sarvam AI (Cloud)**: Recommended for maximum accuracy and speed.
+    - **Whisper (Local)**: A free, privacy-focused fallback that runs on your machine.
+- **Persistent Settings**: Remembers your preferred language, engine, and API key securely between sessions.
+- **Modern Dashboard**: A clean, single-screen GUI built for non-technical users.
 
-Many video editors can generate usable transcripts for English, but support becomes unreliable or unavailable for languages such as Bengali. That slows down editing, captioning, searching, and reviewing spoken content.
+---
 
-LTTC aims to solve that by generating local timed captions, such as `.srt` files, from video or audio files. The first target language is Bengali, but the tool is designed around language codes so more languages can be added and tested over time.
+## 🚀 Getting Started
 
-## Name
+### 1. Prerequisite: API Key
+To use the high-accuracy cloud engine, you need an API key:
+- Sign up at the [Sarvam AI Dashboard](https://dashboard.sarvam.ai/).
+- Copy your **API Subscription Key**.
 
-The best expansion for **LTTC** is:
+### 2. Installation (Windows)
+1. **Install Python**: [Download here](https://www.python.org/) (Ensure you check **"Add Python to PATH"**).
+2. **Install FFmpeg**: [Download here](https://ffmpeg.org/download.html) and add it to your PATH.
+3. **Download this repo**: Clone or download the ZIP to your computer.
 
-**Local Transcription & Timed Captions**
+### 3. Launch
+Double-click **`Start STC.bat`**.
+- The first run will automatically set up your environment.
+- If you plan to use **Whisper (Local)** mode, say `y` when asked about an **NVIDIA GPU**.
 
-It is short, direct, and easy to understand. It says what the tool does without sounding too abstract. “Local Timed Transcriptions & Captions” also works, but it is a little harder to say and less natural as a project name.
+---
 
-## Current Features
+## 🔒 Security & Privacy
 
-- Transcribes video/audio locally using OpenAI Whisper
-- Optionally transcribes using Sarvam AI Saaras v3 for Indian-language ASR
-- Generates timed captions as `.srt` files
-- Defaults to Bengali (`bn`)
-- Supports Whisper model sizes: `tiny`, `base`, `small`, `medium`, and `large`
-- Includes command-line, classic interactive, and Textual terminal UI modes
+**IMPORTANT: Make your repository PRIVATE.**
+STC saves your API key locally in an encoded format (`.stc_config.json`) for convenience. To prevent your key from being exposed:
 
-## Requirements
+1. Go to your repository settings on GitHub/GitLab.
+2. Under "Danger Zone", click **Change visibility**.
+3. Select **Make private**.
 
-- Python 3.x
-- FFmpeg installed and available from the terminal
-- Python packages:
-  - `openai-whisper`
-  - `pysrt`
-  - `rich`
-  - `sarvam-ai`
-  - `textual`
+---
 
-## Setup
+## 📺 How to Use
 
-Clone the repository, then create an isolated virtual environment. This is strongly recommended because Whisper depends on PyTorch, and PyTorch can conflict with other ML packages installed in global Python.
+1. **Select Engine**: Choose **Sarvam AI** (Default) or **Whisper**.
+2. **Browse**: Pick your video or audio file.
+3. **Settings**: Enter your **API Key** (for Sarvam) and select **Bengali**.
+4. **Start**: Click **START TASK**.
+5. Your `.srt` file will be generated in the same folder as your video.
 
-```bash
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-Install the CPU build of PyTorch first:
-
-```bash
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
-
-If you have an NVIDIA GPU and CUDA available, install the matching CUDA PyTorch build instead of the CPU build. Then verify that LTTC can see it:
-
-```bash
-python LTTC.py --check-hardware
-```
-
-Then install LTTC's Python dependencies:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-LTTC can also help install missing Python packages when it starts. If a required package is missing, interactive runs inside a virtual environment will ask whether to install it.
-
-To install missing Python dependencies automatically inside a virtual environment:
-
-```bash
-python LTTC.py --install-deps
-```
-
-If a package is installed but broken, such as an incomplete PyTorch install on Windows, LTTC will show a repair command. You can run the repair automatically inside a virtual environment:
-
-```bash
-python LTTC.py --repair-deps
-```
-
-LTTC avoids automatic dependency changes in global Python by default. If you intentionally want to modify global Python, use:
-
-```bash
-python LTTC.py --repair-deps --allow-global-install
-```
-
-Make sure FFmpeg is installed:
-
-```bash
-ffmpeg -version
-```
-
-If that command does not work, install FFmpeg first and add it to your system `PATH`.
-
-## Usage
-
-Open the terminal UI:
-
-```bash
-python LTTC.py --tui
-```
-
-You can also run `python LTTC.py` from an interactive terminal to open the UI by default.
-
-Run LTTC on a video or audio file:
-
-```bash
-python LTTC.py "path/to/video.mp4" --lang bn --model base
-```
-
-By default, LTTC uses `--device auto` for local Whisper and will choose CUDA when PyTorch can see an NVIDIA GPU. You can also force a device:
-
-```bash
-python LTTC.py "path/to/video.mp4" --lang bn --model base --device cuda
-python LTTC.py "path/to/video.mp4" --lang bn --model base --device cpu
-```
-
-Use Sarvam AI instead of local Whisper:
-
-```bash
-$env:SARVAM_API_KEY = "your_api_key_here"
-python LTTC.py "path/to/video.mp4" --backend sarvam --lang bn --sarvam-mode transcribe
-```
-
-You can also pass the key directly:
-
-```bash
-python LTTC.py "path/to/video.mp4" --backend sarvam --lang bn --sarvam-api-key "your_api_key_here"
-```
-
-Sarvam uses BCP-47 language codes such as `bn-IN`; LTTC maps `bn` to `bn-IN` automatically. Sarvam's REST API is best for short audio clips; long-video support should later use their batch API.
-
-If Python dependencies are missing, install them automatically while running:
-
-```bash
-python LTTC.py "path/to/video.mp4" --lang bn --install-deps
-```
-
-If Whisper or PyTorch is installed but fails to load, repair dependencies while running:
-
-```bash
-python LTTC.py "path/to/video.mp4" --lang bn --repair-deps
-```
-
-Choose an output file:
-
-```bash
-python LTTC.py "path/to/video.mp4" --lang bn --model base --output captions.bn.srt
-```
-
-Use interactive mode:
-
-```bash
-python LTTC.py --interactive
-```
-
-In interactive mode, press Enter at the file path prompt to open a browse window and select a video or audio file.
-
-## Examples
-
-Generate Bengali captions from a video:
-
-```bash
-python LTTC.py "my-video.mp4" --lang bn
-```
-
-Use a larger Whisper model for better quality:
-
-```bash
-python LTTC.py "my-video.mp4" --lang bn --model medium
-```
-
-## Roadmap
-
-- Improve Bengali transcription and caption timing workflow
-- Add cleaner packaging so `lttc` can be installed as a command
-- Add more output formats, such as `.vtt` and plain timed transcript text
-- Add batch processing for multiple files
-- Add simple quality review tools for fixing captions faster
-- Test more under-supported languages
-
-## Project Status
-
-LTTC is early and experimental. The first goal is to make a reliable local workflow for Bengali video transcription and timed captions.
+---
 
 ## License
-
-MIT License
-
-Copyright (c) 2026 Bishnu Mahali
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+MIT License - Copyright (c) 2026 Bishnu Mahali

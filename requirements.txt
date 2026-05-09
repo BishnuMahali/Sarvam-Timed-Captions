@@ -1,5 +1,5 @@
+numpy<2.0
 openai-whisper
+pydub
 pysrt
-rich
-sarvam-ai
-textual
+requests
