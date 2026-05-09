@@ -192,7 +192,7 @@ class STCGui:
     def process_logs(self):
         try:
             while True:
-                self.log_text.insert(tk.END, f f"> {self.log_queue.get_nowait()}\n")
+                self.log_text.insert(tk.END, f"> {self.log_queue.get_nowait()}\n")
                 self.log_text.see(tk.END)
         except: pass
         self.root.after(100, self.process_logs)
