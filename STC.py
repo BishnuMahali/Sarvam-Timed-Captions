@@ -2,7 +2,7 @@
 Copyright (c) 2026 Bishnu Mahali
 Licensed under the MIT License. See LICENSE for details.
 
-Sarvam Timed Captions (STC)
+Sarvam Timed Captions (STC) - v1.0.0
 Dual-Engine Edition (Sarvam AI & Whisper)
 """
 

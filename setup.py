@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="sarvam-timed-captions",
-    version="0.6.0",
+    version="1.0.0",
     py_modules=["STC"],
     install_requires=[
         "numpy<2.0",
