@@ -67,7 +67,7 @@ LANG_MAP = {
     "Odia": "or-IN",
 }
 
-WHISPER_MODELS = ["tiny", "base", "small", "medium", "large"]
+WHISPER_MODELS = ["tiny", "base", "small", "medium", "large", "turbo"]
 
 def detect_hardware_acceleration():
     info = {"recommended": "cpu", "cuda_available": False, "devices": []}
@@ -101,6 +101,7 @@ def check_whisper_model_cached(model_name):
     return False
 
 def split_audio_fixed(audio, target_len_ms):
+    MIN_CHUNK_MS = 100  # Minimum chunk length to avoid API rejection (Sarvam requires >= ~13ms)
     total_len = len(audio)
     chunks = []
     for i in range(0, total_len, target_len_ms):
@@ -111,6 +112,11 @@ def split_audio_fixed(audio, target_len_ms):
             "start_sec": p_start / 1000.0,
             "duration_sec": (p_end - p_start) / 1000.0
         })
+    # Merge tiny tail chunk into the previous one
+    if len(chunks) > 1 and chunks[-1]["duration_sec"] * 1000 < MIN_CHUNK_MS:
+        tail = chunks.pop()
+        chunks[-1]["audio"] = chunks[-1]["audio"] + tail["audio"]
+        chunks[-1]["duration_sec"] += tail["duration_sec"]
     return chunks
 
 def split_audio_smart(audio, target_len_ms, min_silence_len=200, silence_thresh=-40):
@@ -161,6 +167,7 @@ def split_audio_smart(audio, target_len_ms, min_silence_len=200, silence_thresh=
     cut_points.append(total_len)
     
     # Generate chunk dicts
+    MIN_CHUNK_MS = 100  # Minimum chunk length to avoid API rejection
     chunks = []
     for i in range(len(cut_points) - 1):
         p_start = cut_points[i]
@@ -170,7 +177,55 @@ def split_audio_smart(audio, target_len_ms, min_silence_len=200, silence_thresh=
             "start_sec": p_start / 1000.0,
             "duration_sec": (p_end - p_start) / 1000.0
         })
+    # Merge tiny tail chunk into the previous one
+    if len(chunks) > 1 and chunks[-1]["duration_sec"] * 1000 < MIN_CHUNK_MS:
+        tail = chunks.pop()
+        chunks[-1]["audio"] = chunks[-1]["audio"] + tail["audio"]
+        chunks[-1]["duration_sec"] += tail["duration_sec"]
     return chunks
+
+def subdivide_segments(segments, max_duration_sec):
+    subdivided = []
+    for s in segments:
+        text = s.get("text", "").strip()
+        start = s.get("start_time_seconds", 0.0)
+        end = s.get("end_time_seconds", 0.0)
+        duration = end - start
+        
+        if not text:
+            continue
+            
+        if duration <= max_duration_sec:
+            subdivided.append(s)
+            continue
+            
+        words = text.split()
+        if not words:
+            continue
+            
+        time_per_word = duration / len(words)
+        
+        current_words = []
+        current_start = start
+        
+        for i, word in enumerate(words):
+            current_words.append(word)
+            expected_duration = len(current_words) * time_per_word
+            
+            if expected_duration >= max_duration_sec or i == len(words) - 1:
+                current_end = current_start + expected_duration
+                if i == len(words) - 1:
+                    current_end = end
+                
+                subdivided.append({
+                    "text": " ".join(current_words),
+                    "start_time_seconds": current_start,
+                    "end_time_seconds": current_end
+                })
+                current_start = current_end
+                current_words = []
+                
+    return subdivided
 
 class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
@@ -179,21 +234,22 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
         self.TkdndVersion = TkinterDnD._require(self)
         
         self.title("Sarvam Timed Captions - Dashboard")
-        self.geometry("820x780")
-        self.minsize(760, 680)
+        self.geometry("820x900")
+        self.minsize(760, 780)
         
         self.log_queue = queue.Queue()
         
         # 1. Initialize ALL variables first
         self.engine_var = tk.StringVar(value="Sarvam AI (Cloud)")
         self.lang_var = tk.StringVar(value="Bengali")
-        self.model_var = tk.StringVar(value="base")
+        self.model_var = tk.StringVar(value="medium")
+        self.hf_model_var = tk.StringVar(value="ai4bharat/indicwhisper-large")
         self.key_var = tk.StringVar()
         self.path_var = tk.StringVar()
         
         self.sarvam_plan_var = tk.StringVar(value="Starter (60 RPM)")
         self.sarvam_custom_rpm_var = tk.StringVar(value="60")
-        self.chunk_len_var = tk.StringVar(value="5")
+        self.chunk_len_var = tk.StringVar(value="2")
         self.chunking_mode_var = tk.StringVar(value="throttle")
         self.enable_chunking_var = tk.BooleanVar(value=True)
         self.smart_silence_var = tk.BooleanVar(value=True)
@@ -222,6 +278,9 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
         # Register Drag and Drop for the whole window
         self.drop_target_register(DND_FILES)
         self.dnd_bind('<<Drop>>', self.on_file_drop)
+
+        # Ensure clicking X (cross icon) closes both the GUI and the terminal
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.after(100, self.process_logs)
 
@@ -293,7 +352,7 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
         lbl_engine = ctk.CTkLabel(engine_card, text="TRANSCRIPTION ENGINE", font=("Segoe UI", 11, "bold"), text_color="#38bdf8")
         lbl_engine.pack(anchor="w", padx=15, pady=(15, 5))
         
-        self.engine_combo = ctk.CTkOptionMenu(engine_card, variable=self.engine_var, values=["Sarvam AI (Cloud)", "Whisper (Local)"], height=32)
+        self.engine_combo = ctk.CTkOptionMenu(engine_card, variable=self.engine_var, values=["Sarvam AI (Cloud)", "Whisper (Local)", "HuggingFace (Local)"], height=32)
         self.engine_combo.pack(fill="x", padx=15, pady=5)
         
         self.dynamic_frame = ctk.CTkFrame(engine_card, fg_color="transparent")
@@ -342,8 +401,17 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
         
         btn_row = ctk.CTkFrame(logs_card, fg_color="transparent")
         btn_row.pack(fill="x", padx=15, pady=(0, 15))
-        self.btn_exit = ctk.CTkButton(btn_row, text="Exit Application", width=120, command=self.quit, fg_color="#334155", hover_color="#475569")
+        self.btn_exit = ctk.CTkButton(btn_row, text="Exit Application", width=120, command=self.on_close, fg_color="#334155", hover_color="#475569")
         self.btn_exit.pack(side="right")
+
+    def on_close(self):
+        """Handle window close (X button or Exit button) — kills GUI + terminal."""
+        try:
+            self.save_settings()
+            cleanup_temp()
+        except: pass
+        self.destroy()
+        os._exit(0)  # Force-kill the Python process so the terminal window closes too
 
     def toggle_engine_ui(self):
         for widget in self.dynamic_frame.winfo_children(): widget.destroy()
@@ -374,7 +442,7 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
             self.update_custom_rpm_visibility()
             
             # 4. Enable Chunking Checkbox
-            self.chk_chunk = ctk.CTkCheckBox(self.dynamic_frame, text="Enable Chunking (REST requires <30s)", variable=self.enable_chunking_var)
+            self.chk_chunk = ctk.CTkCheckBox(self.dynamic_frame, text="Enable Audio Chunking & Caption Slicing", variable=self.enable_chunking_var)
             self.chk_chunk.pack(anchor="w", pady=8)
             
             # 5. Chunking Settings Frame (contains length, silence chk, and radio buttons)
@@ -382,7 +450,7 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
             
             row_len = ctk.CTkFrame(self.chunking_settings_frame, fg_color="transparent")
             row_len.pack(fill="x", pady=4)
-            ctk.CTkLabel(row_len, text="Length (sec):", width=80, anchor="w").pack(side="left")
+            ctk.CTkLabel(row_len, text="Max Caption Length (sec):", width=160, anchor="w").pack(side="left")
             self.entry_len = ctk.CTkEntry(row_len, textvariable=self.chunk_len_var, width=80, height=30)
             self.entry_len.pack(side="left")
             
@@ -396,7 +464,7 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
             
             self.update_chunking_controls_visibility()
             
-        else:
+        elif "Whisper" in engine:
             # Whisper Engine Settings
             row_model = ctk.CTkFrame(self.dynamic_frame, fg_color="transparent")
             row_model.pack(fill="x", pady=4)
@@ -426,7 +494,7 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
             self.download_btn.pack(fill="x", pady=8)
             
             # Enable Chunking Checkbox
-            self.chk_chunk = ctk.CTkCheckBox(self.dynamic_frame, text="Enable Chunking (Not recommended)", variable=self.enable_chunking_var)
+            self.chk_chunk = ctk.CTkCheckBox(self.dynamic_frame, text="Enable Audio Chunking & Caption Slicing", variable=self.enable_chunking_var)
             self.chk_chunk.pack(anchor="w", pady=8)
             
             # Chunking Settings Frame
@@ -434,13 +502,40 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
             
             row_len = ctk.CTkFrame(self.chunking_settings_frame, fg_color="transparent")
             row_len.pack(fill="x", pady=4)
-            ctk.CTkLabel(row_len, text="Length (sec):", width=80, anchor="w").pack(side="left")
+            ctk.CTkLabel(row_len, text="Max Caption Length (sec):", width=160, anchor="w").pack(side="left")
             self.entry_len = ctk.CTkEntry(row_len, textvariable=self.chunk_len_var, width=80, height=30)
             self.entry_len.pack(side="left")
             
             self.chk_silence = ctk.CTkCheckBox(self.chunking_settings_frame, text="Align cuts with nearest silence (recommended)", variable=self.smart_silence_var)
             self.chk_silence.pack(anchor="w", pady=6)
             
+            self.update_chunking_controls_visibility()
+
+        elif "HuggingFace" in engine:
+            row_model = ctk.CTkFrame(self.dynamic_frame, fg_color="transparent")
+            row_model.pack(fill="x", pady=4)
+            ctk.CTkLabel(row_model, text="HF Repo ID:", width=80, anchor="w").pack(side="left")
+            self.entry_hf_model = ctk.CTkEntry(row_model, textvariable=self.hf_model_var, height=30)
+            self.entry_hf_model.pack(side="left", fill="x", expand=True)
+            
+            self.lbl_hw = ctk.CTkLabel(self.dynamic_frame, text="Hardware: CPU", font=("Segoe UI", 9, "italic"), text_color="#94a3b8", anchor="w")
+            self.lbl_hw.pack(fill="x", pady=2)
+            hw = detect_hardware_acceleration()
+            hw_text = f"Hardware: {hw['recommended'].upper()}"
+            if hw['cuda_available'] and hw['devices']:
+                hw_text += f" ({hw['devices'][0]})"
+            self.lbl_hw.configure(text=hw_text)
+            
+            self.chk_chunk = ctk.CTkCheckBox(self.dynamic_frame, text="Enable Audio Chunking & Caption Slicing", variable=self.enable_chunking_var)
+            self.chk_chunk.pack(anchor="w", pady=8)
+            self.chunking_settings_frame = ctk.CTkFrame(self.dynamic_frame, fg_color="transparent")
+            row_len = ctk.CTkFrame(self.chunking_settings_frame, fg_color="transparent")
+            row_len.pack(fill="x", pady=4)
+            ctk.CTkLabel(row_len, text="Max Caption Length (sec):", width=160, anchor="w").pack(side="left")
+            self.entry_len = ctk.CTkEntry(row_len, textvariable=self.chunk_len_var, width=80, height=30)
+            self.entry_len.pack(side="left")
+            self.chk_silence = ctk.CTkCheckBox(self.chunking_settings_frame, text="Align cuts with nearest silence (recommended)", variable=self.smart_silence_var)
+            self.chk_silence.pack(anchor="w", pady=6)
             self.update_chunking_controls_visibility()
 
     def handle_engine_change(self):
@@ -515,10 +610,17 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
                         decoded_key = base64.b64decode(cfg["key_enc"].encode()).decode()
                         self.key_var.set(decoded_key)
                     if "model" in cfg:
-                        self.model_var.set(cfg["model"])
+                        loaded_model = cfg["model"]
+                        if loaded_model == "base": loaded_model = "medium"
+                        self.model_var.set(loaded_model)
+                    if "hf_model" in cfg:
+                        self.hf_model_var.set(cfg["hf_model"])
                     self.sarvam_plan_var.set(cfg.get("sarvam_plan", "Starter (60 RPM)"))
                     self.sarvam_custom_rpm_var.set(cfg.get("sarvam_custom_rpm", "60"))
-                    self.chunk_len_var.set(cfg.get("chunk_len_sec", "5"))
+                    
+                    loaded_chunk = cfg.get("chunk_len_sec", "2")
+                    if loaded_chunk in ["5", "30"]: loaded_chunk = "2"
+                    self.chunk_len_var.set(loaded_chunk)
                     self.chunking_mode_var.set(cfg.get("chunking_mode", "throttle"))
                     self.enable_chunking_var.set(cfg.get("enable_chunking", True))
                     self.smart_silence_var.set(cfg.get("smart_silence", True))
@@ -530,6 +632,7 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
                 "engine": self.engine_var.get(), 
                 "lang": self.lang_var.get(),
                 "model": self.model_var.get(),
+                "hf_model": self.hf_model_var.get(),
                 "sarvam_plan": self.sarvam_plan_var.get(),
                 "sarvam_custom_rpm": self.sarvam_custom_rpm_var.get(),
                 "chunk_len_sec": self.chunk_len_var.get(),
@@ -545,11 +648,15 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
     def write_log(self, msg): self.log_queue.put(msg)
     def process_logs(self):
         try:
+            updated = False
             while True:
                 msg = self.log_queue.get_nowait()
                 self.log_text.insert("end", f"> {msg}\n")
                 self.log_text.see("end")
+                updated = True
         except queue.Empty: pass
+        if updated:
+            self.update_idletasks()
         self.after(100, self.process_logs)
 
     def browse_file(self):
@@ -618,22 +725,25 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
                 try: rpm_limit = int(self.sarvam_custom_rpm_var.get().strip())
                 except: rpm_limit = 60
             
-            chunk_len_sec = 5.0
+            chunk_len_sec = 2.0
             try: chunk_len_sec = float(self.chunk_len_var.get().strip())
-            except: chunk_len_sec = 5.0
+            except: chunk_len_sec = 2.0
             
             # Setup chunk length and slicing method
             if enable_chunking:
-                chunk_len_ms = int(chunk_len_sec * 1000)
                 if "Sarvam" in engine:
+                    audio_chunk_sec = min(28.0, max(1.0, chunk_len_sec))
                     if self.chunking_mode_var.get() == "smart":
                         smart_len = total_duration_sec / rpm_limit
-                        chunk_len_sec = min(30.0, max(5.0, smart_len))
-                        chunk_len_ms = int(chunk_len_sec * 1000)
-                        self.write_log(f"Smart chunk length calculated: {chunk_len_sec:.2f}s (based on {total_duration_sec:.1f}s file duration and {rpm_limit} RPM)")
+                        audio_chunk_sec = min(28.0, max(audio_chunk_sec, smart_len))
+                        self.write_log(f"Smart audio chunk length calculated: {audio_chunk_sec:.2f}s (based on {total_duration_sec:.1f}s file duration and {rpm_limit} RPM)")
                     else:
-                        chunk_len_sec = min(30.0, max(1.0, chunk_len_sec))
-                        chunk_len_ms = int(chunk_len_sec * 1000)
+                        self.write_log(f"Using strict front-end chunk length: {audio_chunk_sec:.2f}s")
+                else:
+                    audio_chunk_sec = max(1.0, chunk_len_sec)
+                    self.write_log(f"Using strict front-end chunk length: {audio_chunk_sec:.2f}s")
+                
+                chunk_len_ms = int(audio_chunk_sec * 1000)
                 
                 # Check for smart silence cut alignment
                 if self.smart_silence_var.get():
@@ -651,12 +761,24 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
             self.write_log(f"Processing {total_chunks} segments via {engine}...")
             
             whisper_model = None
+            hf_pipe = None
             hw = None
             if "Whisper" in engine:
                 import whisper
                 hw = detect_hardware_acceleration()
                 self.write_log(f"Loading Whisper {self.model_var.get()}...")
                 whisper_model = whisper.load_model(self.model_var.get(), device=hw["recommended"])
+            elif "HuggingFace" in engine:
+                try:
+                    from transformers import pipeline
+                except ImportError:
+                    raise Exception("Please install transformers and torchaudio: pip install transformers torchaudio soundfile")
+                hw = detect_hardware_acceleration()
+                device = 0 if hw["cuda_available"] else -1
+                hf_id = self.hf_model_var.get().strip()
+                if not hf_id: hf_id = "openai/whisper-base"
+                self.write_log(f"Loading HuggingFace Pipeline: {hf_id}...")
+                hf_pipe = pipeline("automatic-speech-recognition", model=hf_id, device=device)
             
             # Sliding window request history for rate limit tracking
             request_times = []
@@ -680,13 +802,26 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
                         # Throttling/Wait logic (both in smart and throttle mode as safety check)
                         now = time.time()
                         request_times = [t for t in request_times if now - t < 60]
-                        if len(request_times) >= rpm_limit:
+                        # 2 request safety buffer to ensure we don't accidentally clip the limit boundary
+                        safe_limit = max(1, rpm_limit - 2)
+                        if len(request_times) >= safe_limit:
                             sleep_time = (request_times[0] + 60) - now
                             if sleep_time > 0:
                                 self.write_log(f"Rate limit safety: sleeping for {sleep_time:.2f}s to respect the {rpm_limit} RPM limit...")
                                 time.sleep(sleep_time)
                             now = time.time()
                             request_times = [t for t in request_times if now - t < 60]
+                            
+                        # Pace requests to prevent burst limit triggers
+                        if request_times:
+                            pace = 60.0 / rpm_limit
+                            time_since_last = now - request_times[-1]
+                            if time_since_last < pace:
+                                pace_sleep = pace - time_since_last
+                                self.write_log(f"Pacing request: sleeping {pace_sleep:.2f}s to prevent burst limits...")
+                                time.sleep(pace_sleep)
+                                now = time.time()
+                                
                         request_times.append(now)
                         
                         key = self.key_var.get().strip()
@@ -698,19 +833,28 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
                         )
                         
                         is_quota_error = False
+                        is_rate_limit = False
+                        is_hard_quota = False
                         if resp.status_code == 429:
-                            is_quota_error = True
+                            is_rate_limit = True
                         elif resp.status_code in [400, 401, 403]:
                             err_msg = resp.text.lower()
-                            if any(x in err_msg for x in ["quota", "limit exceeded", "credit", "balance", "rate limit", "too many requests"]):
-                                is_quota_error = True
+                            if "too many requests" in err_msg or "rate limit" in err_msg:
+                                is_rate_limit = True
+                            elif any(x in err_msg for x in ["quota", "limit exceeded", "credit", "balance"]):
+                                is_hard_quota = True
                                 
                         if resp.status_code == 200:
                             data = resp.json()
                             segments = data.get("segments", [{"text": data.get("transcript", ""), "start_time_seconds": 0, "end_time_seconds": chunk_duration_sec}])
                             transcribed = True
-                        elif is_quota_error:
-                            self.write_log("API rate limit or quota exceeded!")
+                        elif is_rate_limit:
+                            self.write_log(f"API Rate Limit hit (429). Waiting 60 seconds for quota window to reset before retrying...")
+                            time.sleep(60)
+                            # Loop continues to retry the exact same chunk
+                            continue
+                        elif is_hard_quota:
+                            self.write_log("API hard quota or credit limit exhausted!")
                             event = threading.Event()
                             result_dict = {"fallback": False}
                             self.after(0, lambda: self.ask_fallback(event, result_dict))
@@ -728,17 +872,38 @@ class STCGui(ctk.CTk, TkinterDnD.DnDWrapper):
                                     whisper_model = whisper.load_model(self.model_var.get(), device=hw["recommended"])
                             else:
                                 self.write_log("Process stopped by user.")
-                                raise Exception("API rate limit or quota exceeded. Process stopped.")
+                                raise Exception("API hard quota or credit limit exhausted. Process stopped.")
                         else:
                             self.write_log(f"API Error on segment {idx}: {resp.text}")
                             raise Exception(f"API Error: {resp.text}")
-                    else:
+                    elif "Whisper" in engine:
                         # Local Whisper Mode
-                        res = whisper_model.transcribe(c_file, language=lang_code[:2], task="transcribe")
+                        res = whisper_model.transcribe(c_file, language=lang_code[:2], task="transcribe", initial_prompt="A professional and accurate transcription with proper punctuation and capitalization.")
                         segments = [{"text": s["text"], "start_time_seconds": s["start"], "end_time_seconds": s["end"]} for s in res.get("segments", [])]
+                        transcribed = True
+                    elif "HuggingFace" in engine:
+                        # HuggingFace Pipeline Mode
+                        # Handle whisper models specially for timestamps
+                        gen_kwargs = {"task": "transcribe"}
+                        if "whisper" in hf_id.lower(): gen_kwargs["language"] = lang_code[:2]
+                        
+                        res = hf_pipe(c_file, return_timestamps=True, generate_kwargs=gen_kwargs)
+                        segments = []
+                        for c in res.get("chunks", []):
+                            ts = c.get("timestamp", (0.0, chunk_duration_sec))
+                            end_t = ts[1] if ts[1] is not None else chunk_duration_sec
+                            segments.append({
+                                "text": c["text"],
+                                "start_time_seconds": ts[0] if ts[0] is not None else 0.0,
+                                "end_time_seconds": end_t
+                            })
+                        if not segments and "text" in res:
+                            segments.append({"text": res["text"], "start_time_seconds": 0.0, "end_time_seconds": chunk_duration_sec})
                         transcribed = True
                 
                 if os.path.exists(c_file): os.remove(c_file)
+                
+                # We rely purely on audio chunking for caption length
                 
                 for s in segments:
                     text = s["text"].strip()

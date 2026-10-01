@@ -1,7 +1,6 @@
-numpy<2.0
 openai-whisper
 pydub
 pysrt
 requests
-customtkinter
+customtkinter>=5.2.2
 tkinterdnd2

@@ -1,13 +1,17 @@
-# Sarvam Timed Captions (STC)
+# Sarvam Timed Captions (STC) v1.1.0
 
-A professional desktop transcription studio designed to generate highly accurate timed captions (.srt) from video and audio files. Powered by the **Sarvam AI Cloud API** for state-of-the-art Indic language transcription, with **OpenAI Whisper** as a free local fallback. Built on a modern, high-contrast CustomTkinter interface with drag-and-drop support.
+A professional desktop transcription studio designed to generate highly accurate timed captions (.srt) from video and audio files. Powered by the **Sarvam AI Cloud API** for state-of-the-art Indic language transcription, with **OpenAI Whisper** and **HuggingFace models** (e.g. AI4Bharat IndicWhisper) as free local alternatives. Built on a modern, high-contrast CustomTkinter interface with drag-and-drop support.
 
 ## 🌟 Key Features
 
 - **Modern Slate & Indigo Dashboard**: Overhauled interface built with native CustomTkinter widgets, offering clean typography, responsive layouts, and interactive focus highlighting.
 - **Drag & Drop Integration**: Easily load media files by dragging and dropping them anywhere on the application window or into the designated drop zone.
-- **API Request Limit Controls**: Configurable plan presets (Starter: 60 RPM, Pro: 200 RPM, Business: 1000 RPM, or Custom Limit) with a sliding-window rate limiter to prevent 429 throttling errors.
+- **API Request Limit Controls**: Configurable plan presets (Starter: 60 RPM, Pro: 200 RPM, Business: 1000 RPM, or Custom Limit) with a sliding-window rate limiter and micro-pacing to prevent 429 throttling errors. **Automatic 60-second retry** when limits are hit — no manual intervention needed.
 - **Waveform Silence Alignment (VAD)**: Intelligently aligns segment cuts with silent gaps between words using pydub's silence detector, ensuring speech is never sliced mid-word.
+- **Triple-Engine Architecture**:
+  - **Sarvam AI (Cloud)**: State-of-the-art Indic speech recognition via API.
+  - **Whisper (Local)**: OpenAI's Whisper models (`tiny` through `turbo`) for offline use.
+  - **HuggingFace (Local)**: Load any HuggingFace model by repo ID (e.g. `ai4bharat/indicwhisper-large`) for superior Indic language accuracy locally.
 - **Dynamic Local AI Fallback**: Thread-safe error listener automatically detects cloud quota exhaustion or rate limits, prompting the user to transition to local Whisper model transcription on the fly.
 - **Local Model Manager**: Detects PyTorch CUDA hardware acceleration and cached model weights, with a background pre-download utility.
 - **Flexible Chunking Modes**:
@@ -50,7 +54,7 @@ STC saves your API key locally in an encoded format (`CONFIG/.stc_config.json`) 
 ## 📺 How to Use
 
 1. **Drop File**: Drag and drop your video or audio file onto the dashboard, or click **Browse...**.
-2. **Select Engine**: Choose **Sarvam AI (Cloud)** or **Whisper (Local)**.
+2. **Select Engine**: Choose **Sarvam AI (Cloud)**, **Whisper (Local)**, or **HuggingFace (Local)** (paste any HuggingFace repo ID like `ai4bharat/indicwhisper-large`).
 3. **Settings**: Enter your **API Key** (for Sarvam) and select target **Language** (e.g. Bengali).
 4. **Silence Cut & Limit Settings**: Configure chunk lengths and toggle **Align cuts with nearest silence** (recommended).
 5. **Start**: Click **START TASK**. Your `.srt` file will be generated in the same directory as the media file.
